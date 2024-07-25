@@ -133,7 +133,12 @@ int iio_dmaengine_buffer_submit_block(struct iio_dma_buffer_queue *queue,
 
 		for (i = 0; i < nents; i++) {
 			vecs[i].addr = sg_dma_address(sgl);
-			vecs[i].len = min(sg_dma_len(sgl), len_total);
+			/*
+			 * out of tree change since we still don't have the
+			 * latest changes on the min macro where comparing two
+			 * unsigned values is perfectly fine.
+			 */
+			vecs[i].len = min_t(size_t, sg_dma_len(sgl), len_total);
 			len_total -= vecs[i].len;
 
 			sgl = sg_next(sgl);

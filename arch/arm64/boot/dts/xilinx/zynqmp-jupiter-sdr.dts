@@ -457,6 +457,7 @@
 			#dma-cells = <1>;
 			interrupts = <0 109 IRQ_TYPE_LEVEL_HIGH>;
 			clocks = <&zynqmp_clk 71>;
+                        dma-coherent;
 
 			adi,channels {
 				#size-cells = <0>;
@@ -478,6 +479,7 @@
 			#dma-cells = <1>;
 			interrupts = <0 108 IRQ_TYPE_LEVEL_HIGH>;
 			clocks = <&zynqmp_clk 71>;
+                        dma-coherent;
 
 			adi,channels {
 				#size-cells = <0>;
@@ -499,6 +501,7 @@
 			#dma-cells = <1>;
 			interrupts = <0 107 IRQ_TYPE_LEVEL_HIGH>;
 			clocks = <&zynqmp_clk 71>;
+                        dma-coherent;
 
 			adi,channels {
 				#size-cells = <0>;
@@ -520,6 +523,7 @@
 			#dma-cells = <1>;
 			interrupts = <0 106 IRQ_TYPE_LEVEL_HIGH>;
 			clocks = <&zynqmp_clk 71>;
+                        dma-coherent;
 
 			adi,channels {
 				#size-cells = <0>;

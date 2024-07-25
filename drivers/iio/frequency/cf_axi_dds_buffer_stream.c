@@ -39,9 +39,13 @@ static int dds_buffer_submit_block(struct iio_dma_buffer_queue *queue,
 #ifdef CONFIG_IIO_DMA_BUF_MMAP_LEGACY
 			if (block->block.flags & IIO_BUFFER_BLOCK_FLAG_CYCLIC) {
 				block->block.flags &= ~IIO_BUFFER_BLOCK_FLAG_CYCLIC;
+#else
+			if (block->cyclic) {
+				block->cyclic = false;
+#endif
 				oneshot = false;
 			}
-#endif
+
 			cf_axi_dds_pl_ddr_fifo_ctrl_oneshot(st, oneshot);
 		}
 

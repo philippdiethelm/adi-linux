@@ -679,7 +679,7 @@ static int iio_dma_buffer_io(struct iio_buffer *buffer, size_t n,
 
 	mutex_lock(&queue->lock);
 
-	if (!queue->fileio.active_block->state) {
+	if (!queue->fileio.active_block) {
 		block = iio_dma_buffer_dequeue(queue);
 		if (block == NULL) {
 			ret = 0;
@@ -689,8 +689,6 @@ static int iio_dma_buffer_io(struct iio_buffer *buffer, size_t n,
 	} else {
 		block = queue->fileio.active_block;
 	}
-
-	block = queue->fileio.active_block;
 
 	n = rounddown(n, buffer->bytes_per_datum);
 #ifdef CONFIG_IIO_DMA_BUF_MMAP_LEGACY
