@@ -370,25 +370,6 @@ static const struct adp_constants const_adp5585 = {
 	.reg			= adp5585_reg,
 };
 
-static const struct adp5589_gpio_platform_data adp5589_default_gpio_pdata = {
-	.gpio_start = -1,
-};
-
-static const struct adp5589_kpad_platform_data adp5589_default_pdata = {
-	.gpio_data = &adp5589_default_gpio_pdata,
-};
-
-static const struct adp5589_kpad_platform_data *adp5589_kpad_pdata_get(
-	struct device *dev)
-{
-	const struct adp5589_kpad_platform_data *pdata = dev_get_platdata(dev);
-
-	if (!pdata)
-		pdata = &adp5589_default_pdata;
-
-	return pdata;
-}
-
 static int adp5589_read(struct i2c_client *client, u8 reg)
 {
 	int ret = i2c_smbus_read_byte_data(client, reg);
@@ -432,30 +413,6 @@ static void adp5589_gpio_set_value(struct gpio_chip *chip,
 
 	adp5589_write(kpad->client, kpad->var->reg(ADP5589_GPO_DATA_OUT_A) +
 		      bank, kpad->dat_out[bank]);
-
-	mutex_unlock(&kpad->gpio_lock);
-}
-
-static void adp5589_gpio_set_multiple(struct gpio_chip *chip,
-				      unsigned long *mask, unsigned long *bits)
-{
-	struct adp5589_kpad *kpad = container_of(chip, struct adp5589_kpad, gc);
-	u8 bank, reg_mask, reg_bits;
-
-	mutex_lock(&kpad->gpio_lock);
-
-	for (bank = 0; bank <= kpad->var->bank(kpad->var->maxgpio); bank++) {
-		if (bank > kpad->var->bank(get_bitmask_order(*mask) - 1))
-			break;
-		reg_mask = mask[bank / sizeof(*mask)] >>
-			   ((bank % sizeof(*mask)) * BITS_PER_BYTE);
-		reg_bits = bits[bank / sizeof(*bits)] >>
-			   ((bank % sizeof(*bits)) * BITS_PER_BYTE);
-		kpad->dat_out[bank] &= ~reg_mask;
-		kpad->dat_out[bank] |= reg_bits & reg_mask;
-		adp5589_write(kpad->client, kpad->var->reg(ADP5589_GPO_DATA_OUT_A) + bank,
-			      kpad->dat_out[bank]);
-	}
 
 	mutex_unlock(&kpad->gpio_lock);
 }
@@ -542,8 +499,7 @@ static int adp5589_build_gpiomap(struct adp5589_kpad *kpad,
 static int adp5589_gpio_add(struct adp5589_kpad *kpad)
 {
 	struct device *dev = &kpad->client->dev;
-	const struct adp5589_kpad_platform_data *pdata =
-		adp5589_kpad_pdata_get(dev);
+	const struct adp5589_kpad_platform_data *pdata = dev_get_platdata(dev);
 	const struct adp5589_gpio_platform_data *gpio_data = pdata->gpio_data;
 	int i, error;
 
@@ -561,7 +517,6 @@ static int adp5589_gpio_add(struct adp5589_kpad *kpad)
 	kpad->gc.direction_output = adp5589_gpio_direction_output;
 	kpad->gc.get = adp5589_gpio_get_value;
 	kpad->gc.set = adp5589_gpio_set_value;
-	kpad->gc.set_multiple = adp5589_gpio_set_multiple;
 	kpad->gc.can_sleep = 1;
 
 	kpad->gc.base = gpio_data->gpio_start;
@@ -665,7 +620,7 @@ static int adp5589_setup(struct adp5589_kpad *kpad)
 {
 	struct i2c_client *client = kpad->client;
 	const struct adp5589_kpad_platform_data *pdata =
-		adp5589_kpad_pdata_get(&client->dev);
+		dev_get_platdata(&client->dev);
 	u8 (*reg) (u8) = kpad->var->reg;
 	unsigned char evt_mode1 = 0, evt_mode2 = 0, evt_mode3 = 0;
 	unsigned char pull_mask = 0;
@@ -870,7 +825,7 @@ static int adp5589_keypad_add(struct adp5589_kpad *kpad, unsigned int revid)
 {
 	struct i2c_client *client = kpad->client;
 	const struct adp5589_kpad_platform_data *pdata =
-		adp5589_kpad_pdata_get(&client->dev);
+		dev_get_platdata(&client->dev);
 	struct input_dev *input;
 	unsigned int i;
 	int error;
@@ -987,31 +942,12 @@ static void adp5589_clear_config(void *data)
 	adp5589_write(client, kpad->var->reg(ADP5589_GENERAL_CFG), 0);
 }
 
-static int adp5589_i2c_get_driver_data(struct i2c_client *i2c,
-				       const struct i2c_device_id *id)
+static int adp5589_probe(struct i2c_client *client)
 {
-	const struct of_device_id *match;
-
-	if (id)
-		return id->driver_data;
-
-	if (!IS_ENABLED(CONFIG_OF) || !i2c->dev.of_node)
-		return -ENODEV;
-
-	match = of_match_node(i2c->dev.driver->of_match_table,
-			      i2c->dev.of_node);
-	if (match)
-		return (uintptr_t)match->data;
-
-	return -ENODEV;
-}
-
-static int adp5589_probe(struct i2c_client *client,
-			 const struct i2c_device_id *id)
-{
+	const struct i2c_device_id *id = i2c_client_get_device_id(client);
 	struct adp5589_kpad *kpad;
 	const struct adp5589_kpad_platform_data *pdata =
-		adp5589_kpad_pdata_get(&client->dev);
+		dev_get_platdata(&client->dev);
 	unsigned int revid;
 	int error, ret;
 
@@ -1021,17 +957,18 @@ static int adp5589_probe(struct i2c_client *client,
 		return -EIO;
 	}
 
+	if (!pdata) {
+		dev_err(&client->dev, "no platform data?\n");
+		return -EINVAL;
+	}
+
 	kpad = devm_kzalloc(&client->dev, sizeof(*kpad), GFP_KERNEL);
 	if (!kpad)
 		return -ENOMEM;
 
 	kpad->client = client;
 
-	ret = adp5589_i2c_get_driver_data(client, id);
-	if (ret < 0)
-		return ret;
-
-	switch (ret) {
+	switch (id->driver_data) {
 	case ADP5585_02:
 		kpad->support_row5 = true;
 		fallthrough;
@@ -1079,7 +1016,7 @@ static int adp5589_probe(struct i2c_client *client,
 	return 0;
 }
 
-static int __maybe_unused adp5589_suspend(struct device *dev)
+static int adp5589_suspend(struct device *dev)
 {
 	struct i2c_client *client = to_i2c_client(dev);
 	struct adp5589_kpad *kpad = i2c_get_clientdata(client);
@@ -1090,7 +1027,7 @@ static int __maybe_unused adp5589_suspend(struct device *dev)
 	return 0;
 }
 
-static int __maybe_unused adp5589_resume(struct device *dev)
+static int adp5589_resume(struct device *dev)
 {
 	struct i2c_client *client = to_i2c_client(dev);
 	struct adp5589_kpad *kpad = i2c_get_clientdata(client);
@@ -1101,14 +1038,7 @@ static int __maybe_unused adp5589_resume(struct device *dev)
 	return 0;
 }
 
-static SIMPLE_DEV_PM_OPS(adp5589_dev_pm_ops, adp5589_suspend, adp5589_resume);
-
-static const struct of_device_id adp5589_of_match[] = {
-	{ .compatible = "adi,adp5585", .data = (void *)ADP5585_01 },
-	{ .compatible = "adi,adp5585-02", .data = (void *)ADP5585_02 },
-	{ .compatible = "adi,adp5589", .data = (void *)ADP5589 },
-	{}
-};
+static DEFINE_SIMPLE_DEV_PM_OPS(adp5589_dev_pm_ops, adp5589_suspend, adp5589_resume);
 
 static const struct i2c_device_id adp5589_id[] = {
 	{"adp5589-keys", ADP5589},
@@ -1122,10 +1052,9 @@ MODULE_DEVICE_TABLE(i2c, adp5589_id);
 static struct i2c_driver adp5589_driver = {
 	.driver = {
 		.name = KBUILD_MODNAME,
-		.pm = &adp5589_dev_pm_ops,
-		.of_match_table = adp5589_of_match,
+		.pm = pm_sleep_ptr(&adp5589_dev_pm_ops),
 	},
-	.probe = adp5589_probe,
+	.probe_new = adp5589_probe,
 	.id_table = adp5589_id,
 };
 
