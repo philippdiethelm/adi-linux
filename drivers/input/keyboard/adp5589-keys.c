@@ -7,7 +7,10 @@
  * Copyright (C) 2010-2011 Analog Devices Inc.
  */
 
+#include "linux/array_size.h"
 #include <linux/bitops.h>
+#include <linux/bits.h>
+#include <linux/minmax.h>
 #include <linux/module.h>
 #include <linux/interrupt.h>
 #include <linux/irq.h>
@@ -15,13 +18,29 @@
 #include <linux/errno.h>
 #include <linux/pm.h>
 #include <linux/pm_wakeirq.h>
-#include <linux/platform_device.h>
+#include <linux/property.h>
 #include <linux/input.h>
+#include <linux/input/matrix_keypad.h>
 #include <linux/i2c.h>
 #include <linux/gpio/driver.h>
 #include <linux/slab.h>
 
-#include <linux/input/adp5589.h>
+/*
+ * ADP5589 specific GPI and Keymap defines
+ */
+#define ADP5589_KEYMAPSIZE		88
+
+#define ADP5589_COL_SHIFT		8
+#define ADP5589_MAX_ROW_NUM		7
+#define ADP5589_MAX_COL_NUM		10
+/*
+ * ADP5585 specific GPI and Keymap defines
+ */
+#define ADP5585_KEYMAPSIZE		30
+
+#define ADP5585_COL_SHIFT		6
+#define ADP5585_MAX_ROW_NUM		5
+#define ADP5585_MAX_COL_NUM		4
 
 /* ADP5589/ADP5585 Common Registers */
 #define ADP5589_5_ID			0x00
@@ -202,25 +221,18 @@
 #define ADP5589_MAXGPIO		19
 #define ADP5585_MAXGPIO		11 /* 10 on the ADP5585-01, 11 on ADP5585-02 */
 
-enum {
-	ADP5589,
-	ADP5585_01,
-	ADP5585_02
-};
+/* As needed for the matrix parsing code */
+#define ADP5589_MAX_KEYMAPSIZE	123
+
+#define ADP5589_MAX_UNLOCK_TIME_SEC	7
 
 struct adp_constants {
 	u8 maxgpio;
 	u8 keymapsize;
-	u8 gpi_pin_row_base;
-	u8 gpi_pin_row_end;
-	u8 gpi_pin_col_base;
 	u8 gpi_pin_base;
 	u8 gpi_pin_end;
-	u8 gpimapsize_max;
 	u8 max_row_num;
 	u8 max_col_num;
-	u8 row_mask;
-	u8 col_mask;
 	u8 col_shift;
 	u8 c4_extend_cfg;
 	u8 (*bank) (u8 offset);
@@ -238,20 +250,55 @@ struct adp5589_kpad {
 	struct i2c_client *client;
 	struct input_dev *input;
 	const struct adp5589_info *info;
-	unsigned short keycode[ADP5589_KEYMAPSIZE];
+	unsigned short keycode[ADP5589_MAX_KEYMAPSIZE];
 	const struct adp5589_gpi_map *gpimap;
+	u32 keypad_en_mask;
+	u32 key_poll_time;
+	u32 row_shift;
+	u32 unlock_time;
+	u32 unlock_keys[2];
+	int nkeys_unlock;
+	u32 reset1_keys[3];
+	int nkeys_reset1;
+	u32 reset2_keys[2];
+	int nkeys_reset2;
 	unsigned short gpimapsize;
 	unsigned extend_cfg;
-#ifdef CONFIG_GPIOLIB
 	unsigned char gpiomap[ADP5589_MAXGPIO];
 	struct gpio_chip gc;
 	struct mutex gpio_lock;	/* Protect cached dir, dat_out */
+	u8 reset_cfg;
 	u8 dat_out[3];
 	u8 dir[3];
 	u8 int_en[3];
 	u8 irq_mask[3];
-#endif
 };
+
+static inline bool in_range64(u64 val, u64 start, u64 len)
+{
+	return (val - start) < len;
+}
+
+static inline bool in_range32(u32 val, u32 start, u32 len)
+{
+	return (val - start) < len;
+}
+
+/**
+ * in_range - Determine if a value lies within a range.
+ * @val: Value to test.
+ * @start: First value in range.
+ * @len: Number of values in range.
+ *
+ * This is more efficient than "if (start <= val && val < (start + len))".
+ * It also gives a different answer if @start + @len overflows the size of
+ * the type by a sufficient amount to encompass @val.  Decide for yourself
+ * which behaviour you want, or prove that start + len never overflow.
+ * Do not blindly replace one form with the other.
+ */
+#define in_range(val, start, len)					\
+	((sizeof(start) | sizeof(len) | sizeof(val)) <= sizeof(u32) ?	\
+		in_range32(val, start, len) : in_range64(val, start, len))
 
 /*
  *  ADP5589 / ADP5585 derivative / variant handling
@@ -278,17 +325,11 @@ static unsigned char adp5589_reg(unsigned char reg)
 static const struct adp_constants const_adp5589 = {
 	.maxgpio		= ADP5589_MAXGPIO,
 	.keymapsize		= ADP5589_KEYMAPSIZE,
-	.gpi_pin_row_base	= ADP5589_GPI_PIN_ROW_BASE,
-	.gpi_pin_row_end	= ADP5589_GPI_PIN_ROW_END,
-	.gpi_pin_col_base	= ADP5589_GPI_PIN_COL_BASE,
-	.gpi_pin_base		= ADP5589_GPI_PIN_BASE,
-	.gpi_pin_end		= ADP5589_GPI_PIN_END,
-	.gpimapsize_max		= ADP5589_GPIMAPSIZE_MAX,
+	.gpi_pin_base		= 97,
+	.gpi_pin_end		= 115,
 	.c4_extend_cfg		= 12,
 	.max_row_num		= ADP5589_MAX_ROW_NUM,
 	.max_col_num		= ADP5589_MAX_COL_NUM,
-	.row_mask		= ADP5589_ROW_MASK,
-	.col_mask		= ADP5589_COL_MASK,
 	.col_shift		= ADP5589_COL_SHIFT,
 	.bank			= adp5589_bank,
 	.bit			= adp5589_bit,
@@ -359,17 +400,11 @@ static unsigned char adp5585_reg(unsigned char reg)
 static const struct adp_constants const_adp5585 = {
 	.maxgpio		= ADP5585_MAXGPIO,
 	.keymapsize		= ADP5585_KEYMAPSIZE,
-	.gpi_pin_row_base	= ADP5585_GPI_PIN_ROW_BASE,
-	.gpi_pin_row_end	= ADP5585_GPI_PIN_ROW_END,
-	.gpi_pin_col_base	= ADP5585_GPI_PIN_COL_BASE,
-	.gpi_pin_base		= ADP5585_GPI_PIN_BASE,
-	.gpi_pin_end		= ADP5585_GPI_PIN_END,
-	.gpimapsize_max		= ADP5585_GPIMAPSIZE_MAX,
+	.gpi_pin_base		= 37,
+	.gpi_pin_end		= 47,
 	.c4_extend_cfg		= 10,
 	.max_row_num		= ADP5585_MAX_ROW_NUM,
 	.max_col_num		= ADP5585_MAX_COL_NUM,
-	.row_mask		= ADP5585_ROW_MASK,
-	.col_mask		= ADP5585_COL_MASK,
 	.col_shift		= ADP5585_COL_SHIFT,
 	.bank			= adp5585_bank,
 	.bit			= adp5585_bit,
@@ -469,8 +504,7 @@ static int adp5589_gpio_direction_output(struct gpio_chip *chip,
 	return ret;
 }
 
-static int adp5589_build_gpiomap(struct adp5589_kpad *kpad,
-				const struct adp5589_kpad_platform_data *pdata)
+static int adp5589_build_gpiomap(struct adp5589_kpad *kpad)
 {
 	bool pin_used[ADP5589_MAXGPIO];
 	int n_unused = 0;
@@ -479,7 +513,7 @@ static int adp5589_build_gpiomap(struct adp5589_kpad *kpad,
 	memset(pin_used, false, sizeof(pin_used));
 
 	for (i = 0; i < kpad->info->var->maxgpio; i++)
-		if (pdata->keypad_en_mask & BIT(i))
+		if (kpad->keypad_en_mask & BIT(i))
 			pin_used[i] = true;
 
 	if (kpad->extend_cfg & R4_EXTEND_CFG)
@@ -573,16 +607,11 @@ static const struct irq_chip adp5589_irq_chip = {
 static int adp5589_gpio_add(struct adp5589_kpad *kpad)
 {
 	struct device *dev = &kpad->client->dev;
-	const struct adp5589_kpad_platform_data *pdata = dev_get_platdata(dev);
-	const struct adp5589_gpio_platform_data *gpio_data = pdata->gpio_data;
 	struct gpio_irq_chip *girq;
 	int i, error;
 
-	if (!gpio_data)
-		return 0;
-
 	kpad->gc.parent = dev;
-	kpad->gc.ngpio = adp5589_build_gpiomap(kpad, pdata);
+	kpad->gc.ngpio = adp5589_build_gpiomap(kpad);
 	if (kpad->gc.ngpio == 0) {
 		dev_info(dev, "No unused gpios left to export\n");
 		return 0;
@@ -594,14 +623,21 @@ static int adp5589_gpio_add(struct adp5589_kpad *kpad)
 	kpad->gc.set = adp5589_gpio_set_value;
 	kpad->gc.can_sleep = 1;
 
-	kpad->gc.base = gpio_data->gpio_start;
+	kpad->gc.base = -1;
 	kpad->gc.label = kpad->client->name;
 	kpad->gc.owner = THIS_MODULE;
 
-	girq = &kpad->gc.irq;
-	gpio_irq_chip_set_chip(girq, &adp5589_irq_chip);
-	girq->handler = handle_bad_irq;
-	girq->threaded = true;
+	if (device_property_present(dev, "interrupt-controller")) {
+		if (!kpad->client->irq) {
+			dev_err(dev, "Unable to serve as interrupt controller without IRQ\n");
+			return -EINVAL;
+		}
+
+		girq = &kpad->gc.irq;
+		gpio_irq_chip_set_chip(girq, &adp5589_irq_chip);
+		girq->handler = handle_bad_irq;
+		girq->threaded = true;
+	}
 
 	mutex_init(&kpad->gpio_lock);
 
@@ -680,12 +716,21 @@ static void adp5589_report_events(struct adp5589_kpad *kpad, int ev_cnt)
 		int key_press = key & KEY_EV_PRESSED;
 
 		if (key_val >= kpad->info->var->gpi_pin_base &&
-		    key_val <= kpad->info->var->gpi_pin_end)
+		    key_val <= kpad->info->var->gpi_pin_end) {
 			/* gpio line used as IRQ source */
 			adp5589_gpio_irq_handle(kpad, key_val, key_press);
-		else
+		} else {
+			int row = (key_val - 1) / (kpad->info->var->max_col_num + 1);
+			int col = (key_val - 1) % (kpad->info->var->max_col_num + 1);
+			int code = MATRIX_SCAN_CODE(row, col, kpad->row_shift);
+
+			dev_dbg_ratelimited(&kpad->client->dev,
+					    "report key(%d) r(%d) c(%d) code(%d)\n",
+					    key_val, row, col, kpad->keycode[code]);
+
 			input_report_key(kpad->input,
-					 kpad->keycode[key_val - 1], key_press);
+					 kpad->keycode[code], key_press);
+		}
 	}
 }
 
@@ -713,139 +758,71 @@ static irqreturn_t adp5589_irq(int irq, void *handle)
 	return IRQ_HANDLED;
 }
 
-static int adp5589_get_evcode(struct adp5589_kpad *kpad, unsigned short key)
-{
-	int i;
-
-	for (i = 0; i < kpad->info->var->keymapsize; i++)
-		if (key == kpad->keycode[i])
-			return (i + 1) | KEY_EV_PRESSED;
-
-	dev_err(&kpad->client->dev, "RESET/UNLOCK key not in keycode map\n");
-
-	return -EINVAL;
-}
-
 static int adp5589_setup(struct adp5589_kpad *kpad)
 {
 	struct i2c_client *client = kpad->client;
-	const struct adp5589_kpad_platform_data *pdata =
-		dev_get_platdata(&client->dev);
 	u8 (*reg) (u8) = kpad->info->var->reg;
-	unsigned char pull_mask = 0;
 	int i, ret;
 
 	ret = adp5589_write(client, reg(ADP5589_PIN_CONFIG_A),
-			    pdata->keypad_en_mask & kpad->info->var->row_mask);
+			    kpad->keypad_en_mask);
 	ret |= adp5589_write(client, reg(ADP5589_PIN_CONFIG_B),
-			     (pdata->keypad_en_mask >> kpad->info->var->col_shift) &
-			     kpad->info->var->col_mask);
+			     kpad->keypad_en_mask >> kpad->info->var->col_shift);
 
 	if (!kpad->info->is_adp5585)
 		ret |= adp5589_write(client, ADP5589_PIN_CONFIG_C,
-				     (pdata->keypad_en_mask >> 16) & 0xFF);
+				     kpad->keypad_en_mask >> 16);
 
-	if (!kpad->info->is_adp5585 && pdata->en_keylock) {
-		ret |= adp5589_write(client, ADP5589_UNLOCK1,
-				     pdata->unlock_key1);
-		ret |= adp5589_write(client, ADP5589_UNLOCK2,
-				     pdata->unlock_key2);
-		ret |= adp5589_write(client, ADP5589_UNLOCK_TIMERS,
-				     pdata->unlock_timer & LTIME_MASK);
-		ret |= adp5589_write(client, ADP5589_LOCK_CFG, LOCK_EN);
+	/* unlock keys */
+	for (i = 0; i < kpad->nkeys_unlock; i++) {
+		ret = adp5589_write(client, ADP5589_UNLOCK1 + i,
+				    kpad->unlock_keys[i] | KEY_EV_PRESSED);
+		if (ret)
+			return ret;
+	}
+
+	if (kpad->nkeys_unlock) {
+		ret = adp5589_write(client, ADP5589_UNLOCK_TIMERS,
+				    kpad->unlock_time);
+		if (ret)
+			return ret;
+
+		ret = adp5589_write(client, ADP5589_LOCK_CFG, LOCK_EN);
+		if (ret)
+			return ret;
 	}
 
 	for (i = 0; i < KEYP_MAX_EVENT; i++)
 		ret |= adp5589_read(client, ADP5589_5_FIFO_1 + i);
 
-	if (pdata->pull_dis_mask & pdata->pullup_en_100k &
-		pdata->pullup_en_300k & pdata->pulldown_en_300k)
-		dev_warn(&client->dev, "Conflicting pull resistor config\n");
-
-	for (i = 0; i <= kpad->info->var->max_row_num; i++) {
-		unsigned int val = 0, bit = BIT(i);
-		if (pdata->pullup_en_300k & bit)
-			val = 0;
-		else if (pdata->pulldown_en_300k & bit)
-			val = 1;
-		else if (pdata->pullup_en_100k & bit)
-			val = 2;
-		else if (pdata->pull_dis_mask & bit)
-			val = 3;
-
-		pull_mask |= val << (2 * (i & 0x3));
-
-		if (i % 4 == 3 || i == kpad->info->var->max_row_num) {
-			ret |= adp5589_write(client, reg(ADP5585_RPULL_CONFIG_A)
-					     + (i >> 2), pull_mask);
-			pull_mask = 0;
-		}
+	/* reset keys */
+	for (i = 0; i < kpad->nkeys_reset1; i++) {
+		ret = adp5589_write(client, reg(ADP5589_RESET1_EVENT_A + i),
+				    kpad->reset1_keys[i] | KEY_EV_PRESSED);
+		if (ret)
+			return ret;
 	}
 
-	for (i = 0; i <= kpad->info->var->max_col_num; i++) {
-		unsigned int val = 0, bit = BIT(i + kpad->info->var->col_shift);
-		if (pdata->pullup_en_300k & bit)
-			val = 0;
-		else if (pdata->pulldown_en_300k & bit)
-			val = 1;
-		else if (pdata->pullup_en_100k & bit)
-			val = 2;
-		else if (pdata->pull_dis_mask & bit)
-			val = 3;
-
-		pull_mask |= val << (2 * (i & 0x3));
-
-		if (i % 4 == 3 || i == kpad->info->var->max_col_num) {
-			ret |= adp5589_write(client,
-					     reg(ADP5585_RPULL_CONFIG_C) +
-					     (i >> 2), pull_mask);
-			pull_mask = 0;
-		}
-	}
-
-	if (pdata->reset1_key_1 && pdata->reset1_key_2 && pdata->reset1_key_3) {
-		ret |= adp5589_write(client, reg(ADP5589_RESET1_EVENT_A),
-				     adp5589_get_evcode(kpad,
-							pdata->reset1_key_1));
-		ret |= adp5589_write(client, reg(ADP5589_RESET1_EVENT_B),
-				     adp5589_get_evcode(kpad,
-							pdata->reset1_key_2));
-		ret |= adp5589_write(client, reg(ADP5589_RESET1_EVENT_C),
-				     adp5589_get_evcode(kpad,
-							pdata->reset1_key_3));
-		kpad->extend_cfg |= R4_EXTEND_CFG;
-	}
-
-	if (pdata->reset2_key_1 && pdata->reset2_key_2) {
-		ret |= adp5589_write(client, reg(ADP5589_RESET2_EVENT_A),
-				     adp5589_get_evcode(kpad,
-							pdata->reset2_key_1));
-		ret |= adp5589_write(client, reg(ADP5589_RESET2_EVENT_B),
-				     adp5589_get_evcode(kpad,
-							pdata->reset2_key_2));
-		kpad->extend_cfg |= C4_EXTEND_CFG;
+	for (i = 0; i < kpad->nkeys_reset2; i++) {
+		ret = adp5589_write(client, reg(ADP5589_RESET2_EVENT_A + i),
+				    kpad->reset2_keys[i] | KEY_EV_PRESSED);
+		if (ret)
+			return ret;
 	}
 
 	if (kpad->extend_cfg) {
-		ret |= adp5589_write(client, reg(ADP5589_RESET_CFG),
-				     pdata->reset_cfg);
-		ret |= adp5589_write(client, reg(ADP5589_PIN_CONFIG_D),
-				     kpad->extend_cfg);
+		ret = adp5589_write(client, reg(ADP5589_RESET_CFG),
+				    kpad->reset_cfg);
+		if (ret)
+			return ret;
+		ret = adp5589_write(client, reg(ADP5589_PIN_CONFIG_D),
+				    kpad->extend_cfg);
+		if (ret)
+			return ret;
 	}
 
-	ret |= adp5589_write(client, reg(ADP5589_DEBOUNCE_DIS_A),
-			    pdata->debounce_dis_mask & kpad->info->var->row_mask);
-
-	ret |= adp5589_write(client, reg(ADP5589_DEBOUNCE_DIS_B),
-			     (pdata->debounce_dis_mask >> kpad->info->var->col_shift)
-			     & kpad->info->var->col_mask);
-
-	if (!kpad->info->is_adp5585)
-		ret |= adp5589_write(client, reg(ADP5589_DEBOUNCE_DIS_C),
-				     (pdata->debounce_dis_mask >> 16) & 0xFF);
-
 	ret |= adp5589_write(client, reg(ADP5589_POLL_PTIME_CFG),
-			     pdata->scan_cycle_time & PTIME_MASK);
+			     kpad->key_poll_time);
 	ret |= adp5589_write(client, ADP5589_5_INT_STATUS,
 			     (kpad->info->is_adp5585 ? 0 : LOGIC2_INT) |
 			     LOGIC1_INT | OVRFLOW_INT |
@@ -865,31 +842,270 @@ static int adp5589_setup(struct adp5589_kpad *kpad)
 	return 0;
 }
 
+static int adp5589_validate_key(struct adp5589_kpad *kpad, u32 key, bool is_gpi)
+{
+	struct i2c_client *client = kpad->client;
+	u32 row, col;
+
+	if (is_gpi) {
+		u32 gpi = key - kpad->info->var->gpi_pin_base;
+
+		/* check if it's being used in the keypad */
+		if (BIT(gpi) & kpad->keypad_en_mask) {
+			dev_err(&client->dev,
+				"Invalid unlock GPI(%u) being used in the keypad(%x)\n",
+				gpi, kpad->keypad_en_mask);
+			return -EINVAL;
+		}
+
+		return 0;
+	}
+
+	row = (key - 1) / (kpad->info->var->max_col_num + 1);
+	col = (key - 1) % (kpad->info->var->max_col_num + 1);
+
+	/* both the row and col must be part of the keypad */
+	if (BIT(row) & kpad->keypad_en_mask && BIT(col) & kpad->keypad_en_mask)
+		return 0;
+
+	dev_err(&client->dev, "Invalid unlock key(%u) not used in the keypad(%x)\n",
+		key, kpad->keypad_en_mask);
+
+	return -EINVAL;
+}
+
+static int adp5589_parse_key_array(struct adp5589_kpad *kpad, const char *prop,
+				   u32 *keys, u32 *n_keys, u32 max_keys,
+				   bool reset_key)
+{
+	struct i2c_client *client = kpad->client;
+	unsigned int key, max_keypad;
+	int error;
+
+	*n_keys = device_property_count_u32(&client->dev, prop);
+	if (*n_keys < 0) {
+		*n_keys = 0;
+		return 0;
+	}
+
+	if (kpad->info->is_adp5585 && !reset_key) {
+		dev_err(&client->dev, "Unlock keys not supported for adp5585\n");
+		return -EOPNOTSUPP;
+	}
+
+	if (*n_keys  > max_keys) {
+		dev_err(&client->dev, "Invalid number of keys(%d > %zu) for %s\n",
+			*n_keys, max_keys, prop);
+		return -EINVAL;
+	}
+
+	error = device_property_read_u32_array(&client->dev, prop, keys,
+					       *n_keys);
+	if (error)
+		return error;
+
+	max_keypad = (kpad->info->var->max_row_num + 1) * (kpad->info->var->max_col_num + 1);
+
+	for (key = 0; key < *n_keys; key++) {
+		/* part of the keypad... */
+		if (in_range(keys[key], 1, max_keypad)) {
+			/* is it part of the keypad?! */
+			error = adp5589_validate_key(kpad, keys[key], false);
+			if (error)
+				return error;
+
+			continue;
+		}
+
+		/* part of gpio-keys... */
+		if (in_range(keys[key], kpad->info->var->gpi_pin_base,
+			     kpad->info->var->maxgpio)) {
+			/* is the GPI being used as part of the keypad?! */
+			error = adp5589_validate_key(kpad, keys[key], true);
+			if (error)
+				return error;
+
+			continue;
+		}
+
+		/* wildcard unlock event... */
+		if (!reset_key && kpad->unlock_keys[key] == 127)
+			continue;
+
+		dev_err(&client->dev, "Invalid for key(%u) %s\n", keys[key],
+			prop);
+
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
+static int adp5589_unlock_parse(struct adp5589_kpad *kpad)
+{
+	struct i2c_client *client = kpad->client;
+	int error;
+
+	error = adp5589_parse_key_array(kpad, "adi,unlock-keys",
+					kpad->unlock_keys, &kpad->nkeys_unlock,
+					ARRAY_SIZE(kpad->unlock_keys), false);
+	if (error)
+		return error;
+	if (!kpad->nkeys_unlock)
+		/* no unlock keys */
+		return 0;
+
+	error = device_property_read_u32(&client->dev, "adi,unlock-trigger-sec",
+					 &kpad->unlock_time);
+	if (!error) {
+		if (kpad->unlock_time > ADP5589_MAX_UNLOCK_TIME_SEC) {
+			dev_err(&client->dev, "Invalid unlock time(%u > %d)\n",
+				kpad->unlock_time, ADP5589_MAX_UNLOCK_TIME_SEC);
+			return -EINVAL;
+		}
+	}
+
+	return 0;
+}
+
+static int adp5589_reset_parse(struct adp5589_kpad *kpad)
+{
+	struct i2c_client *client = kpad->client;
+	int error;
+
+	error = adp5589_parse_key_array(kpad, "adi,reset1-keys",
+					kpad->reset1_keys, &kpad->nkeys_reset1,
+					ARRAY_SIZE(kpad->reset1_keys), true);
+	if (error)
+		return error;
+	if (kpad->nkeys_reset1 > 0) {
+		/*
+		 * Then R4 is used as reset output. Make sure it's not being used
+		 * in the keypad.
+		 */
+		if (BIT(4) & kpad->keypad_en_mask) {
+			dev_err(&client->dev, "Row4 cannot be used if reset1 is used\n");
+			return -EINVAL;
+		}
+
+		kpad->extend_cfg = R4_EXTEND_CFG;
+	}
+
+	error = adp5589_parse_key_array(kpad, "adi,reset2-keys",
+					kpad->reset2_keys, &kpad->nkeys_reset2,
+					ARRAY_SIZE(kpad->reset2_keys), true);
+	if (error)
+		return error;
+	if (kpad->nkeys_reset2 > 0) {
+		/*
+		 * Then C4 is used as reset output. Make sure it's not being used
+		 * in the keypad.
+		 */
+		if (BIT(12) & kpad->keypad_en_mask) {
+			dev_err(&client->dev, "Col4 cannot be used if reset2 is used\n");
+			return -EINVAL;
+		}
+
+		kpad->extend_cfg |= C4_EXTEND_CFG;
+	}
+
+	if (!kpad->nkeys_reset2 && !kpad->nkeys_reset1)
+		return 0;
+
+	/* !TODO: Add reset_cfg bindings support */
+
+	return 0;
+}
+
+static int adp5589_parse_fw(struct adp5589_kpad *kpad)
+{
+	u32 keypad_en_mask = 0, cols = 0, rows, prop_val;
+	struct i2c_client *client = kpad->client;
+	int error;
+
+	error = device_property_read_u32(&client->dev, "adi,cols-mask",
+					 &prop_val);
+	if (!error) {
+		if (prop_val > GENMASK(kpad->info->var->max_col_num, 0)) {
+			dev_err(&client->dev, "Invalid column mask(%x)\n",
+				prop_val);
+			return -EINVAL;
+		}
+
+		keypad_en_mask = prop_val << kpad->info->var->col_shift;
+		/*
+		 * Note that given that we get a mask (and the HW allows it), we
+		 * can have holes in our keypad (eg: row0, row1 and row7 enabled).
+		 * However, for the matrix parsing functions we need to pass the
+		 * number of rows/cols as the maximum row/col used plus 1. This
+		 * pretty much means we will also have holes in our SW keypad.
+		 */
+		cols = fls(prop_val);
+	}
+
+	error = device_property_read_u32(&client->dev, "adi,rows-mask",
+					 &prop_val);
+	if (!error) {
+		if (prop_val > GENMASK(kpad->info->var->max_row_num, 0)) {
+			dev_err(&client->dev, "Invalid row mask(%x)\n",
+				prop_val);
+			return -EINVAL;
+		}
+
+		if (!cols) {
+			dev_err(&client->dev, "Cannot have columns with no rows!\n");
+			return -EINVAL;
+		}
+
+		keypad_en_mask |= prop_val;
+		rows = fls(prop_val);
+	}
+
+	if (keypad_en_mask) {
+		error = matrix_keypad_build_keymap(NULL, NULL, rows, cols,
+						   kpad->keycode, kpad->input);
+		if (error)
+			return error;
+
+		kpad->row_shift = get_count_order(cols);
+	}
+
+	/* Can the below still be used with gpio-keys?! */
+	if (device_property_present(&client->dev, "autorepeat"))
+		__set_bit(EV_REP, kpad->input->evbit);
+
+	error = device_property_read_u32(&client->dev, "adi,key-poll-ms",
+					 &prop_val);
+	if (!error) {
+		switch (prop_val) {
+		case 10:
+			fallthrough;
+		case 20:
+			fallthrough;
+		case 30:
+			fallthrough;
+		case 40:
+			kpad->key_poll_time = prop_val / 10 - 1;
+			break;
+		default:
+			dev_err(&client->dev, "Invalid value(%u) for adi,key-poll-ms\n",
+				prop_val);
+			return -EINVAL;
+		}
+	}
+
+	error = adp5589_unlock_parse(kpad);
+	if (error)
+		return error;
+
+	return adp5589_reset_parse(kpad);
+}
+
 static int adp5589_keypad_add(struct adp5589_kpad *kpad, unsigned int revid)
 {
 	struct i2c_client *client = kpad->client;
-	const struct adp5589_kpad_platform_data *pdata =
-		dev_get_platdata(&client->dev);
 	struct input_dev *input;
-	unsigned int i;
 	int error;
-
-	if (!((pdata->keypad_en_mask & kpad->info->var->row_mask) &&
-			(pdata->keypad_en_mask >> kpad->info->var->col_shift)) ||
-			!pdata->keymap) {
-		dev_err(&client->dev, "no rows, cols or keymap from pdata\n");
-		return -EINVAL;
-	}
-
-	if (pdata->keymapsize != kpad->info->var->keymapsize) {
-		dev_err(&client->dev, "invalid keymapsize\n");
-		return -EINVAL;
-	}
-
-	if (!client->irq) {
-		dev_err(&client->dev, "no IRQ?\n");
-		return -EINVAL;
-	}
 
 	input = devm_input_allocate_device(&client->dev);
 	if (!input)
@@ -908,23 +1124,9 @@ static int adp5589_keypad_add(struct adp5589_kpad *kpad, unsigned int revid)
 	input->id.product = 0x0001;
 	input->id.version = revid;
 
-	input->keycodesize = sizeof(kpad->keycode[0]);
-	input->keycodemax = pdata->keymapsize;
-	input->keycode = kpad->keycode;
-
-	memcpy(kpad->keycode, pdata->keymap,
-	       pdata->keymapsize * input->keycodesize);
-
-	/* setup input device */
-	__set_bit(EV_KEY, input->evbit);
-
-	if (pdata->repeat)
-		__set_bit(EV_REP, input->evbit);
-
-	for (i = 0; i < input->keycodemax; i++)
-		if (kpad->keycode[i] <= KEY_MAX)
-			__set_bit(kpad->keycode[i], input->keybit);
-	__clear_bit(KEY_RESERVED, input->keybit);
+	error = adp5589_parse_fw(kpad);
+	if (error)
+		return error;
 
 	error = input_register_device(input);
 	if (error) {
@@ -970,8 +1172,6 @@ static const struct adp5589_info adp5585_2_info = {
 static int adp5589_probe(struct i2c_client *client)
 {
 	struct adp5589_kpad *kpad;
-	const struct adp5589_kpad_platform_data *pdata =
-		dev_get_platdata(&client->dev);
 	unsigned int revid;
 	int error, ret;
 
@@ -979,11 +1179,6 @@ static int adp5589_probe(struct i2c_client *client)
 				     I2C_FUNC_SMBUS_BYTE_DATA)) {
 		dev_err(&client->dev, "SMBUS Byte Data not Supported\n");
 		return -EIO;
-	}
-
-	if (!pdata) {
-		dev_err(&client->dev, "no platform data?\n");
-		return -EINVAL;
 	}
 
 	kpad = devm_kzalloc(&client->dev, sizeof(*kpad), GFP_KERNEL);
@@ -1007,11 +1202,9 @@ static int adp5589_probe(struct i2c_client *client)
 
 	revid = (u8) ret & ADP5589_5_DEVICE_ID_MASK;
 
-	if (pdata->keymapsize) {
-		error = adp5589_keypad_add(kpad, revid);
-		if (error)
-			return error;
-	}
+	error = adp5589_keypad_add(kpad, revid);
+	if (error)
+		return error;
 
 	error = adp5589_setup(kpad);
 	if (error)

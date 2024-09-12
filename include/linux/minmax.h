@@ -3,6 +3,7 @@
 #define _LINUX_MINMAX_H
 
 #include <linux/const.h>
+#include <linux/types.h>
 
 /*
  * min()/max()/clamp() macros must accomplish three things:
