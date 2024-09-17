@@ -7,7 +7,6 @@
  * Copyright (C) 2010-2011 Analog Devices Inc.
  */
 
-#include "linux/array_size.h"
 #include <linux/bitops.h>
 #include <linux/bits.h>
 #include <linux/minmax.h>
@@ -206,6 +205,12 @@
 /* PIN_CONFIG_D Register */
 #define C4_EXTEND_CFG	BIT(6)		/* RESET2 */
 #define R4_EXTEND_CFG	BIT(5)		/* RESET1 */
+
+#define RESET1_POL		BIT(7)
+#define RESET2_POL		BIT(6)
+#define RST_PASSTHRU_EN		BIT(5)
+#define RESET_TRIGGER_TIME	GENMASK(4, 2)
+#define RESET_PULSE_WIDTH	GENMASK(1, 0)
 
 /* LOCK_CFG */
 #define LOCK_EN		BIT(0)
@@ -815,6 +820,7 @@ static int adp5589_setup(struct adp5589_kpad *kpad)
 				    kpad->reset_cfg);
 		if (ret)
 			return ret;
+
 		ret = adp5589_write(client, reg(ADP5589_PIN_CONFIG_D),
 				    kpad->extend_cfg);
 		if (ret)
@@ -971,6 +977,7 @@ static int adp5589_unlock_parse(struct adp5589_kpad *kpad)
 static int adp5589_reset_parse(struct adp5589_kpad *kpad)
 {
 	struct i2c_client *client = kpad->client;
+	u32 prop_val;
 	int error;
 
 	error = adp5589_parse_key_array(kpad, "adi,reset1-keys",
@@ -1012,7 +1019,72 @@ static int adp5589_reset_parse(struct adp5589_kpad *kpad)
 	if (!kpad->nkeys_reset2 && !kpad->nkeys_reset1)
 		return 0;
 
-	/* !TODO: Add reset_cfg bindings support */
+	if (device_property_read_bool(&client->dev, "adi,reset1-active-high"))
+		kpad->reset_cfg = FIELD_PREP(RESET1_POL, 1);
+
+	if (device_property_read_bool(&client->dev, "adi,reset2-active-high"))
+		kpad->reset_cfg |= FIELD_PREP(RESET2_POL, 1);
+
+	if (device_property_read_bool(&client->dev, "adi,rst-passtrough-enable"))
+		kpad->reset_cfg |= FIELD_PREP(RST_PASSTHRU_EN, 1);
+
+	ret = device_property_read_u32(&client->dev, "adi,reset-trigger-ms",
+				       &prop_val);
+	if (!ret) {
+		switch (prop_val) {
+		case 0:
+			kpad->reset_cfg |= FIELD_PREP(RESET_TRIGGER_TIME, 0);
+			break;
+		case 1000:
+			kpad->reset_cfg |= FIELD_PREP(RESET_TRIGGER_TIME, 1);
+			break;
+		case 1500:
+			kpad->reset_cfg |= FIELD_PREP(RESET_TRIGGER_TIME, 2);
+			break;
+		case 2000:
+			kpad->reset_cfg |= FIELD_PREP(RESET_TRIGGER_TIME, 3);
+			break;
+		case 2500:
+			kpad->reset_cfg |= FIELD_PREP(RESET_TRIGGER_TIME, 4);
+			break;
+		case 3000:
+			kpad->reset_cfg |= FIELD_PREP(RESET_TRIGGER_TIME, 5);
+			break;
+		case 3500:
+			kpad->reset_cfg |= FIELD_PREP(RESET_TRIGGER_TIME, 6);
+			break;
+		case 4000:
+			kpad->reset_cfg |= FIELD_PREP(RESET_TRIGGER_TIME, 7);
+			break;
+		default:
+			dev_err(&client->dev, "Invalid value(%u) for adi,reset-trigger-ms\n",
+				prop_val);
+			return -EINVAL;
+		}
+	}
+
+	ret = device_property_read_u32(&client->dev, "adi,reset-pulse-width-us",
+				       &prop_val);
+	if (!ret) {
+		switch (prop_val) {
+		case 500:
+			kpad->reset_cfg |= FIELD_PREP(RESET_PULSE_WIDTH, 0);
+			break;
+		case 1000:
+			kpad->reset_cfg |= FIELD_PREP(RESET_PULSE_WIDTH, 1);
+			break;
+		case 2000:
+			kpad->reset_cfg |= FIELD_PREP(RESET_PULSE_WIDTH, 2);
+			break;
+		case 10000:
+			kpad->reset_cfg |= FIELD_PREP(RESET_PULSE_WIDTH, 3);
+			break;
+		default:
+			dev_err(&client->dev, "Invalid value(%u) for adi,reset-pulse-width-us\n",
+				prop_val);
+			return -EINVAL;
+		}
+	}
 
 	return 0;
 }
