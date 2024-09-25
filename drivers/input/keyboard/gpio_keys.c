@@ -562,6 +562,7 @@ static int gpio_keys_setup_key(struct platform_device *pdev,
 		bool active_low = gpiod_is_active_low(bdata->gpiod);
 
 		if (button->debounce_interval) {
+			dev_info(dev, "Set debounce %d\n", button->debounce_interval * 1000);
 			error = gpiod_set_debounce(bdata->gpiod,
 					button->debounce_interval * 1000);
 			/* use timer if gpiolib doesn't provide debounce */

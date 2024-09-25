@@ -420,6 +420,9 @@ static void adp5589_gpio_set_value(struct gpio_chip *chip,
 	else
 		kpad->dat_out[bank] &= ~bit;
 
+	dev_info(&kpad->client->dev, "Set val(0x%x) for pin(%u), off(%u), bank(%x), bit(%x)\n",
+		kpad->dat_out[bank], kpad->gpiomap[off], off, bank, bit);
+
 	adp5589_write(kpad->client, kpad->info->reg(ADP5589_GPO_DATA_OUT_A) +
 		      bank, kpad->dat_out[bank]);
 }
@@ -432,8 +435,9 @@ static int adp5589_gpio_direction_input(struct gpio_chip *chip,
 	unsigned int bit = kpad->info->bit(kpad->gpiomap[off]);
 
 	guard(mutex)(&kpad->gpio_lock);
-
 	kpad->dir[bank] &= ~bit;
+	dev_info(&kpad->client->dev, "Set in dir(0x%x) for pin(%u), off(%u), bank(%x), bit(%x)\n",
+		 kpad->dir[bank], kpad->gpiomap[off], off, bank, bit);
 	return adp5589_write(kpad->client,
 			     kpad->info->reg(ADP5589_GPIO_DIRECTION_A) + bank,
 			     kpad->dir[bank]);
@@ -448,9 +452,9 @@ static int adp5589_gpio_direction_output(struct gpio_chip *chip,
 	int ret;
 
 	guard(mutex)(&kpad->gpio_lock);
-
 	kpad->dir[bank] |= bit;
-
+	dev_info(&kpad->client->dev, "Set out dir(0x%x) for pin(%u), off(%u), bank(%x), bit(%x)\n",
+		 kpad->dir[bank], kpad->gpiomap[off], off, bank, bit);
 	if (val)
 		kpad->dat_out[bank] |= bit;
 	else
@@ -504,7 +508,8 @@ static int adp5589_gpio_set_bias(struct adp5589_kpad *kpad, unsigned int pin,
 
 	val <<= __bf_shf(msk);
 	kpad->rpull[bank] = (kpad->rpull[bank] & ~msk) | (val & msk);
-
+	dev_info(&kpad->client->dev, "Set bias for cfg(%u), val(%u), bank(%x), msk(%x), reg(%x)\n",
+		 cfg, val, bank, msk, kpad->rpull[bank]);
 	return adp5589_write(kpad->client,
 			     kpad->info->reg(ADP5589_RPULL_CONFIG_A) + bank,
 			     kpad->rpull[bank]);
@@ -516,9 +521,11 @@ static int adp5589_gpio_set_config(struct gpio_chip *chip,  unsigned int off,
 	struct adp5589_kpad *kpad = gpiochip_get_data(chip);
 	unsigned int bank, bit, reg, pin = kpad->gpiomap[off];
 	unsigned int cfg = pinconf_to_config_param(config);
+	unsigned int val;
 	int error;
-	u8 val;
 
+	dev_info(&kpad->client->dev, "Set config for pin(%u), off(%u)\n",
+		 pin, off);
 	switch (cfg) {
 	case PIN_CONFIG_BIAS_PULL_UP:
 		fallthrough;
@@ -543,6 +550,9 @@ static int adp5589_gpio_set_config(struct gpio_chip *chip,  unsigned int off,
 				kpad->debounce_dis[bank] |= bit;
 			else
 				kpad->debounce_dis[bank] &= bit;
+
+			dev_info(&kpad->client->dev, "Set debounce, bank(%x), bit(%x), reg(%x)\n",
+				 bank, bit, kpad->debounce_dis[bank]);
 
 			error = adp5589_write(kpad->client, reg,
 					      kpad->debounce_dis[bank]);
@@ -575,8 +585,11 @@ static int adp5589_build_gpiomap(struct adp5589_kpad *kpad)
 		pin_used[5] = true;
 
 	for (i = 0; i < kpad->info->maxgpio; i++)
-		if (!pin_used[i])
+		if (!pin_used[i]) {
+			dev_info(&kpad->client->dev, "Use pin(%u) as gpio(%u)\n",
+				 i, n_unused);
 			kpad->gpiomap[n_unused++] = i;
+		}
 
 	return n_unused;
 }
@@ -765,7 +778,8 @@ static void adp5589_gpio_irq_handle(struct adp5589_kpad *kpad, int key_val,
 	}
 
 	irq_type = irqd_get_trigger_type(irqd);
-
+	dev_info(&client->dev, "Handle IRQ for pin(%u), hwirq(%u), trigger(%u), key_press(%u)\n",
+		 gpio, hwirq, irq_type, key_press);
 	/*
 	 * Default is active low which means key_press is asserted on
 	 * the falling edge.
@@ -799,7 +813,7 @@ static void adp5589_report_events(struct adp5589_kpad *kpad, int ev_cnt)
 			int col = (key_val - 1) % (kpad->info->max_col_num + 1);
 			int code = MATRIX_SCAN_CODE(row, col, kpad->row_shift);
 
-			dev_dbg_ratelimited(&kpad->client->dev,
+			dev_info_ratelimited(&kpad->client->dev,
 					    "report key(%d) r(%d) c(%d) code(%d)\n",
 					    key_val, row, col, kpad->keycode[code]);
 
@@ -862,6 +876,9 @@ static int adp5589_setup(struct adp5589_kpad *kpad)
 			return ret;
 	}
 
+	dev_info(&client->dev, "Setup n_unlock(%u), n_reset1(%u), n_reset2(%u)\n",
+		 kpad->nkeys_unlock, kpad->nkeys_reset1, kpad->nkeys_reset2);
+
 	/* unlock keys */
 	for (i = 0; i < kpad->nkeys_unlock; i++) {
 		ret = adp5589_write(client, ADP5589_UNLOCK1 + i,
@@ -903,6 +920,8 @@ static int adp5589_setup(struct adp5589_kpad *kpad)
 	}
 
 	if (kpad->extend_cfg) {
+		dev_info(&client->dev, "extend cfg(0x%x), n_reset1(0x%x)\n",
+		 kpad->extend_cfg, kpad->reset_cfg);
 		ret = adp5589_write(client, reg(ADP5589_RESET_CFG),
 				    kpad->reset_cfg);
 		if (ret)
@@ -948,6 +967,9 @@ static int adp5589_validate_key(struct adp5589_kpad *kpad, u32 key, bool is_gpi)
 	if (is_gpi) {
 		u32 gpi = key - kpad->info->gpi_pin_base;
 
+		dev_info(&client->dev, "validate gpi(%u), gpi(%u), keypad(0x%x)\n",
+			 key, gpi, kpad->keypad_en_mask);
+
 		if (gpi == 5 && !kpad->info->support_row5)
 			return dev_err_probe(&client->dev, -EINVAL,
 					     "Invalid unlock/reset GPI(%u) not supported\n", gpi);
@@ -964,8 +986,12 @@ static int adp5589_validate_key(struct adp5589_kpad *kpad, u32 key, bool is_gpi)
 	row = (key - 1) / (kpad->info->max_col_num + 1);
 	col = (key - 1) % (kpad->info->max_col_num + 1);
 
+	dev_info(&client->dev, "validate key(%u), row(%u), col(%u), keypad(0x%x)\n",
+		 key, row, col, kpad->keypad_en_mask);
+
 	/* both the row and col must be part of the keypad */
-	if (BIT(row) & kpad->keypad_en_mask && BIT(col) & kpad->keypad_en_mask)
+	if (BIT(row) & kpad->keypad_en_mask &&
+	    BIT(col) << kpad->info->col_shift & kpad->keypad_en_mask)
 		return 0;
 
 	return dev_err_probe(&client->dev, -EINVAL,
@@ -1001,6 +1027,8 @@ static int adp5589_parse_key_array(struct adp5589_kpad *kpad, const char *prop,
 		return ret;
 
 	max_keypad = (kpad->info->max_row_num + 1) * (kpad->info->max_col_num + 1);
+	dev_info(&client->dev, "validate keys, max_keys(%u), max_gpio(%u)\n",
+		 max_keypad, kpad->info->maxgpio);
 
 	for (key = 0; key < *n_keys; key++) {
 		/* part of the keypad... */
@@ -1270,6 +1298,8 @@ static int adp5589_parse_fw(struct adp5589_kpad *kpad)
 	}
 
 	if (kpad->keypad_en_mask) {
+		dev_info(&client->dev, "Got keypad mask(0x%08X), rows=%u, cols=%u\n",
+			 kpad->keypad_en_mask, rows, cols);
 		error = matrix_keypad_build_keymap(NULL, NULL, rows, cols,
 						   kpad->keycode, kpad->input);
 		if (error)
@@ -1363,6 +1393,7 @@ static void adp5589_clear_config(void *data)
 }
 
 static const struct adp5589_info adp5589_info = {
+	.support_row5 = true,
 	.rpull_banks = ADP5589_RPULL_CONFIG_E - ADP5589_RPULL_CONFIG_A + 1,
 	.c4_extend_cfg = 12,
 	.maxgpio = ADP5589_MAXGPIO,
