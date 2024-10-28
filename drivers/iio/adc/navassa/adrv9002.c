@@ -3511,8 +3511,10 @@ int adrv9002_intf_change_delay(const struct adrv9002_rf_phy *phy, const int chan
 adi_adrv9001_SsiTestModeData_e adrv9002_get_test_pattern(const struct adrv9002_rf_phy *phy,
 							 unsigned int chan, bool rx, bool stop)
 {
-	const struct adrv9002_chan *tx = &phy->tx_channels[chan].channel;
-
+	if (rx && phy->rx_channels[chan].ssi_test.testData)
+		return phy->rx_channels[chan].ssi_test.testData;
+	if (!rx && phy->tx_channels[chan].ssi_test.testData)
+		return phy->tx_channels[chan].ssi_test.testData;
 	if (stop)
 		return ADI_ADRV9001_SSI_TESTMODE_DATA_NORMAL;
 	if (phy->ssi_type == ADI_ADRV9001_SSI_TYPE_CMOS)
@@ -3529,7 +3531,7 @@ adi_adrv9001_SsiTestModeData_e adrv9002_get_test_pattern(const struct adrv9002_r
 	 *
 	 * We use the same threshold as in the rx interface gain for narrow band.
 	 */
-	if (tx->rate < 1 * MEGA)
+	if (phy->tx_channels[chan].channel.rate < 1 * MEGA)
 		return ADI_ADRV9001_SSI_TESTMODE_DATA_PRBS7;
 
 	return ADI_ADRV9001_SSI_TESTMODE_DATA_PRBS15;

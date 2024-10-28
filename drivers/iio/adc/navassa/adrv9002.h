@@ -186,10 +186,8 @@ struct adrv9002_rx_chan {
 	struct adi_adrv9001_RxGainControlPinCfg *pin_cfg;
 	struct clk *tdd_clk;
 	struct gpio_desc *orx_gpio;
-	u8 orx_en;
-#ifdef CONFIG_DEBUG_FS
 	struct adi_adrv9001_RxSsiTestModeCfg ssi_test;
-#endif
+	u8 orx_en;
 };
 
 struct adrv9002_tx_chan {
@@ -197,6 +195,7 @@ struct adrv9002_tx_chan {
 	struct adi_adrv9001_DpdInitCfg *dpd_init;
 	struct adi_adrv9001_DpdCfg *dpd;
 	struct adi_adrv9001_TxAttenuationPinControlCfg *pin_cfg;
+	struct adi_adrv9001_TxSsiTestModeCfg ssi_test;
 	/*
 	 * 0 - Independent
 	 * 1 - Driven by RX1
@@ -208,7 +207,6 @@ struct adrv9002_tx_chan {
 	u8 elb_en;
 	u8 ext_path_calib;
 #ifdef CONFIG_DEBUG_FS
-	struct adi_adrv9001_TxSsiTestModeCfg ssi_test;
 	u8 loopback;
 #endif
 };

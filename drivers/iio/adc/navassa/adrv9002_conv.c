@@ -406,6 +406,8 @@ static int adrv9002_axi_tx_test_pattern_set(const struct axiadc_converter *conv,
 	pattern = adrv9002_get_test_pattern(phy, chan, false, false);
 	if (pattern == ADI_ADRV9001_SSI_TESTMODE_DATA_RAMP_NIBBLE)
 		sel = 10;
+	else if (pattern == ADI_ADRV9001_SSI_TESTMODE_DATA_RAMP_16_BIT)
+		sel = 11;
 	else if (pattern == ADI_ADRV9001_SSI_TESTMODE_DATA_PRBS15)
 		sel = 7;
 	else if (pattern == ADI_ADRV9001_SSI_TESTMODE_DATA_PRBS7)
@@ -448,8 +450,12 @@ static int adrv9002_axi_rx_test_pattern_pn_sel(const struct axiadc_converter *co
 	pattern = adrv9002_get_test_pattern(phy, chan, true, false);
 	if (pattern == ADI_ADRV9001_SSI_TESTMODE_DATA_RAMP_NIBBLE)
 		sel = ADC_PN_RAMP_NIBBLE;
+	else if (pattern == ADI_ADRV9001_SSI_TESTMODE_DATA_RAMP_16_BIT)
+		sel = ADC_PN_RAMP_16;
 	else if (pattern == ADI_ADRV9001_SSI_TESTMODE_DATA_PRBS15)
 		sel = ADC_PN15;
+	else if (pattern == ADI_ADRV9001_SSI_TESTMODE_DATA_PRBS7)
+		sel = ADC_PN7;
 	else
 		return -EINVAL;
 
