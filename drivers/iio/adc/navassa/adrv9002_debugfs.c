@@ -1539,6 +1539,9 @@ void adrv9002_debugfs_create(struct adrv9002_rf_phy *phy, struct dentry *d)
 
 	debugfs_create_u32("dev_clkout_div", 0600, d, &phy->dev_clkout_div);
 
+	debugfs_create_bool("mcs_pulse_external", 0600, d, &phy->mcs_pulse_external);
+	debugfs_create_bool("mcs_trigger_external", 0600, d, &phy->mcs_trigger_external);
+
 	for (chan = 0; chan < phy->chip->n_tx; chan++) {
 		struct adrv9002_tx_chan *tx = &phy->tx_channels[chan];
 
