@@ -38,7 +38,7 @@
 		bits-per-word = <8>;
 		fifo-size = <16>;
 		num-cs = <0x4>;
-		xlnx,num-ss-bits = <0x2>;
+		xlnx,num-ss-bits = <0x4>;
 		xlnx,spi-mode = <0>;
 
 		status = "okay";
