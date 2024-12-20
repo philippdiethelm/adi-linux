@@ -19,7 +19,7 @@
 		rx_fixed_link_clk: clock@1 {
 			#clock-cells = <0>;
 			compatible = "fixed-clock";
-			clock-frequency = <250000000>;
+			clock-frequency = <100000000>;
 			clock-output-names = "rx_link_clk";
 		};
 	};
@@ -81,7 +81,7 @@
 			#clock-cells = <1>;
 			clock-output-names = "rx_gt_clk", "rx_out_clk";
 
-			adi,sys-clk-select = <XCVR_QPLL>;
+			adi,sys-clk-select = <XCVR_CPLL>;
 			adi,out-clk-select = <XCVR_REFCLK_DIV2>;
 			adi,use-lpm-enable;
 
