@@ -558,14 +558,21 @@ static struct iio_chan_spec_ext_info axiadc_ext_info[] = {
 	  },								\
 	}
 
+static const unsigned long ad4080_rx2_available_scan_masks[] = {
+	0x01, 0x02, 0x03,
+	0x00
+};
 static const struct axiadc_chip_info ad4080_chip_info = {
 	.name = "AD4080",
 	.id = AD4080_CHIP_ID,
 	.max_rate = 40000000UL,
 	.scale_table = ad4080_scale_table,
 	.num_scales = ARRAY_SIZE(ad4080_scale_table),
-	.num_channels = 1,
+	.num_channels = 2,
+	.num_shadow_slave_channels = 1,
+	.scan_masks = ad4080_rx2_available_scan_masks,
 	.channel[0] = AD4080_CHAN(0, 0, 20, 'S', 0),
+	.channel[1] = AD4080_CHAN(1, 1, 20, 'S', 0),
 };
 
 static void ad4080_clk_disable(void *data)
