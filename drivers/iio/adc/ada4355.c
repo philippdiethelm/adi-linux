@@ -25,6 +25,7 @@
 
 #include <linux/clk.h>
 
+
 /** Register Definition */
 
 #define ADA4355_REG_CHIP_CONFIGURATION      0x00
@@ -47,8 +48,8 @@
 #define ADA4355_REG_RESOLUTION_SAMPLE_RATE  0X100
 #define ADA4355_REG_USER_IN_OUT_CNTRL       0X101
 
-#define ADA4355_REG_CHIP_ID                 0x8B
-#define AXI_ADA435D5_SELF_SYNC_BIT	    	BIT(1) //???
+//#define ADA4355_CHIP_ID                     0x8B
+#define AXI_ADA4355_SELF_SYNC_BIT	    	BIT(1) //???
 
 /*ADA4355_REG_POWER_MODES 0x08*/
 #define ADA4355_DIGITAL_RESET               GENMASK(1, 0)
@@ -63,7 +64,7 @@
 /*SAMPLE RATE OVERRIDE*/
 #define ADA4355_125_RATE                    0x06
 
-static const int ad4080_scale_table[][2] = {
+static const int ada4355_scale_table[][2] = {
 	    {6000, 0},
 };
 
@@ -74,9 +75,16 @@ struct ada4355_state {
         /* Protect against concurrent accesses to the device and data content */
         struct mutex	            lock;
         unsigned int	            num_lanes;
-        enum ad4080_filter_sel		filter_mode;
-        bool                        filter_enable;
-}
+       // enum ad4080_filter_sel		filter_mode;
+       // bool                        filter_enable;
+};
+
+static const struct regmap_config ada4355_regmap_config = {
+	.reg_bits = 8,
+	.val_bits = 8,
+	.read_flag_mask = BIT(7),
+	//.max_register = 0x29,
+};
 
 static struct ada4355_state *ada4355_get_data(struct iio_dev *indio_dev)
 {
@@ -84,7 +92,7 @@ static struct ada4355_state *ada4355_get_data(struct iio_dev *indio_dev)
          conv = iio_device_get_drvdata(indio_dev);
 
          return conv->phy;
-}
+};
 
 static int ada4355_reg_access(struct iio_dev *indio_dev, unsigned int reg,
                               unsigned int writeval, unsigned int *readval)
@@ -92,7 +100,7 @@ static int ada4355_reg_access(struct iio_dev *indio_dev, unsigned int reg,
          struct ada4355_state *st = ada4355_get_data(indio_dev);
 
          if(readval)
-                return regmap_read(st->regmap, reg, readval) //regmap_read() - Read a value from a single register
+                return regmap_read(st->regmap, reg, readval); //regmap_read() - Read a value from a single register
 
          return regmap_write(st->regmap, reg, writeval);
 }
@@ -132,7 +140,7 @@ static int ada4355_write_raw(struct iio_dev *indio_dev,
 			    int val, int val2, long mask)
 {
 	struct ada4355_state *st = ada4355_get_data(indio_dev);
-	unsigned long s_clk;
+	//unsigned long s_clk;
 
 	switch (mask) {
 	case IIO_CHAN_INFO_SCALE:
@@ -146,13 +154,92 @@ static int ada4355_write_raw(struct iio_dev *indio_dev,
 	return 0;
 }
 
-#define ADA4355_CHAN(_chan, _si, _bits, _sign, _shift)		\
+//static ssize_t ada4355_lvds_sync_read(struct iio_dev *indio_dev,
+//				     uintptr_t private,
+//				     const struct iio_chan_spec *chan,
+//				     char *buf)
+//{
+//	return sprintf(buf, "enable\n");
+//}
+//
+//static ssize_t ada4355_lvds_sync_write(struct iio_dev *indio_dev,
+//				      uintptr_t private,
+//				      const struct iio_chan_spec *chan,
+//				      const char *buf, size_t len)
+//{
+//	struct axiadc_converter *conv = iio_device_get_drvdata(indio_dev);
+//	struct axiadc_state *axi_adc_st = iio_priv(indio_dev);
+//	struct ada4355_state *st = ada4355_get_data(indio_dev);
+//	unsigned int reg_cntrl, reg_cntrl_3;
+//	unsigned int timeout = 10000;
+//	int ret;
+//
+//	mutex_lock(&st->lock);
+//	/*if (st->num_lanes == 1)
+//		ret = regmap_write(st->regmap, AD4080_REG_ADC_DATA_INTF_CONFIG_A,
+//				   AD4080_RESERVED_CONFIG_A_MSK |
+//				   AD4080_INTF_CHK_EN_MSK);
+//	else 
+//		ret = regmap_write(st->regmap, AD4080_REG_ADC_DATA_INTF_CONFIG_A,
+//				   AD4080_RESERVED_CONFIG_A_MSK |
+//				   AD4080_INTF_CHK_EN_MSK |
+//				   AD4080_SPI_LVDS_LANES_MSK);
+//	if (ret)
+//		return ret; */
+//
+//	// set bit 2 of ADI_REG_CNTRL_3 to let the HDL know that the CNV is not used
+//	reg_cntrl_3 = axiadc_read(axi_adc_st, ADI_REG_CNTRL_3);
+//	reg_cntrl_3 |= AXI_ADA4355_SELF_SYNC_BIT;
+//	axiadc_write(axi_adc_st, ADI_REG_CNTRL_3, reg_cntrl_3);
+//
+//	// enable the sync
+//	reg_cntrl = axiadc_read(axi_adc_st, ADI_REG_CNTRL);
+//	reg_cntrl |= ADI_NUM_LANES(st->num_lanes);
+//	reg_cntrl |= ADI_SYNC;
+//	axiadc_write(axi_adc_st, ADI_REG_CNTRL, reg_cntrl);
+//
+//// last part
+//	do {
+//		if (axiadc_read(axi_adc_st, ADI_REG_SYNC_STATUS) == 0)
+//			dev_info(&st->spi->dev, "Not Locked: Running Bit Slip\n");
+//		else
+//			break;
+//	} while (--timeout);
+//
+//// Do we need that ???? Set reg 15 from ad4080, in ada4355 not present a such reg
+//	/*if (timeout) {
+//		dev_info(&st->spi->dev, "Success: Pattern correct and Locked!\n");
+//		if (st->num_lanes == 1)
+//			ret = regmap_write(st->regmap, AD4080_REG_ADC_DATA_INTF_CONFIG_A,
+//					   AD4080_RESERVED_CONFIG_A_MSK);
+//		else
+//			ret = regmap_write(st->regmap, AD4080_REG_ADC_DATA_INTF_CONFIG_A,
+//					   AD4080_RESERVED_CONFIG_A_MSK |
+//					   AD4080_SPI_LVDS_LANES_MSK);
+//	} else {
+//		dev_info(&conv->spi->dev, "LVDS Sync Timeout.\n");
+//		if (st->num_lanes == 1)
+//			ret = regmap_write(st->regmap, AD4080_REG_ADC_DATA_INTF_CONFIG_A,
+//					   AD4080_RESERVED_CONFIG_A_MSK);
+//		else
+//			ret = regmap_write(st->regmap, AD4080_REG_ADC_DATA_INTF_CONFIG_A,
+//					   AD4080_RESERVED_CONFIG_A_MSK |
+//					   AD4080_SPI_LVDS_LANES_MSK);
+//		ret = -ETIME;
+//	}
+//*/
+//	mutex_unlock(&st->lock);
+//
+//	return ret ? ret : len;
+//}
+
+/*#define ADA4355_CHAN(_chan, _si, _bits, _sign, _shift)		\
 	{ .type = IIO_VOLTAGE,						\
 	  .indexed = 1,							\
 	  .channel = _chan,						\
 	  .info_mask_separate = BIT(IIO_CHAN_INFO_SCALE),		\
 	  .info_mask_shared_by_all = BIT(IIO_CHAN_INFO_SAMP_FREQ),	\
-	  .ext_info = axiadc_ext_info,			\
+	 /* .ext_info = axiadc_ext_info,			\
 	  .scan_index = _si,						\
 	  .scan_type = {						\
 			.sign = _sign,					\
@@ -161,16 +248,31 @@ static int ada4355_write_raw(struct iio_dev *indio_dev,
 			.shift = _shift,				\
 	  },								\
 	}
+*/
+#define ADA4355_CHAN(_chan, _si, _bits, _sign, _shift)		\
+    { .type = IIO_VOLTAGE,						\
+      .indexed = 1,							\
+      .channel = _chan,						\
+      .info_mask_separate = BIT(IIO_CHAN_INFO_SCALE),		\
+      .info_mask_shared_by_all = BIT(IIO_CHAN_INFO_SAMP_FREQ),	\
+      .scan_index = _si,						\
+      .scan_type = {						\
+    		.sign = _sign,					\
+    		.realbits = _bits,				\
+    		.storagebits = 16,				\
+    		.shift = _shift,				\
+      },								\
+    }
 
 static const struct axiadc_chip_info ada4355_chip_info = {
 	.name = "ADA4355",
 	.id = ADA4355_CHIP_ID,
 	.max_rate = 125000000UL,
-	.scale_table = ad4080_scale_table, //???
-	.num_scales = ARRAY_SIZE(ad4080_scale_table),//???
+	.scale_table = ada4355_scale_table, //???
+	.num_scales = ARRAY_SIZE(ada4355_scale_table),//???
 	.num_channels = 2,
-	.channel[0] = AD4080_CHAN(0, 0, 16, 'S', 0),
-    .channel[0] = AD4080_CHAN(1, 0, 16, 'S', 0),
+	.channel[0] = ADA4355_CHAN(0, 0, 16, 'S', 0),
+    .channel[1] = ADA4355_CHAN(1, 0, 16, 'S', 0),
 };
 
 static void ada4355_clk_disable(void *data)
@@ -192,44 +294,59 @@ static int ada4355_post_setup(struct iio_dev *indio_dev)
 	axiadc_write(axi_adc_st, ADI_REG_CNTRL, reg_cntrl);
 
 
-	reg_cntrl_3 = axiadc_read(axi_adc_st, ADI_REG_CNTRL_3);
-	reg_cntrl_3 |= AXI_ADA4355_SELF_SYNC_BIT;
-	axiadc_write(axi_adc_st, ADI_REG_CNTRL_3, reg_cntrl_3); // in the default mode the CNV is not used as a start of transfer flag
+	//reg_cntrl_3 = axiadc_read(axi_adc_st, ADI_REG_CNTRL_3);
+	//reg_cntrl_3 |= AXI_ADA4355_SELF_SYNC_BIT;
+	//axiadc_write(axi_adc_st, ADI_REG_CNTRL_3, reg_cntrl_3); // in the default mode the CNV is not used as a start of transfer flag
+
+    // enable the sync
+	reg_cntrl = axiadc_read(axi_adc_st, ADI_REG_CNTRL);
+	reg_cntrl |= ADI_NUM_LANES(st->num_lanes);
+	reg_cntrl |= ADI_SYNC;
+	axiadc_write(axi_adc_st, ADI_REG_CNTRL, reg_cntrl);
 
 	return 0;
 }
 
 static int ada4355_setup(struct ada4355_state *st)
 {
-    int reg, id;
+    unsigned int reg, id;
     int ret;
 
-    ret = regmap_write(st->regmap,  ADA4355_REG_POWER_MODES , ADA4355_DIGITAL_RESET);
-    if (ret)
-		return ret;
-
-    ret = regmap_read(st->regmap, ADA4355_REG_POWER_MODES, &reg);
-	if (ret)
-		return ret;
-
-    ret = regmap_write(st->regmap,  ADA4355_REG_POWER_MODES , (reg & ADA4355_NORMAL_OPERATION));
-    if (ret)
-		return ret;
+   // ret = regmap_write(st->regmap,  ADA4355_REG_POWER_MODES , ADA4355_DIGITAL_RESET);
+   // if (ret)
+	//	return ret;
+//
+   // dev_err(&st->spi->dev, "ADA4355_REG_POWER_MODES_DIG_RESET 0x%X\n",  ret);
+//
+   // ret = regmap_read(st->regmap, ADA4355_REG_POWER_MODES, &reg);
+//
+   // dev_err(&st->spi->dev, "ADA4355_REG_POWER_MODES_NORMAL_OPERATION 0x%X\n", ret);
+	//if (ret)
+	//	return ret;
+//
+   // ret = regmap_write(st->regmap,  ADA4355_REG_POWER_MODES , (reg & ADA4355_NORMAL_OPERATION));
+   //  dev_err(&st->spi->dev, "ADA4355_REG_POWER_MODES_NORMAL_OPERATION_WR 0x%X\n", ret);
+   // if (ret)
+	//	return ret;
 
     ret = regmap_write(st->regmap, ADA4355_REG_CHIP_CONFIGURATION, 0x00);
-	if (ret)
+	dev_err(&st->spi->dev, "ADA4355_REG_CHIP_CONFIGURATION 0x%X\n", ret);
+    if (ret)
 		return ret;
 
     ret = regmap_write(st->regmap, ADA4355_REG_DEVICE_INDEX, 0x02);
-	if (ret)
+	    dev_err(&st->spi->dev, "ADA4355_REG_DEVICE_INDEX 0x%X\n", ret);
+    if (ret)
 		return ret;
 
     ret = regmap_write(st->regmap, ADA4355_REG_SERIAL_CHANNEL_STATUS, 0x03);
+    dev_err(&st->spi->dev, "ADA4355_REG_SERIAL_CHANNEL_STATUS 0x%X\n", ret);
 	if (ret)
 		return ret;
 
     ret = regmap_write(st->regmap, ADA4355_REG_DEVICE_INDEX, 0x31);
-	if (ret)
+	dev_err(&st->spi->dev, "ADA4355_REG_DEVICE_INDEX 0x%X\n", ret);
+    if (ret)
 		return ret;
 
     ret = regmap_read(st->regmap, ADA4355_REG_CHIP_ID, &id);
@@ -238,7 +355,7 @@ static int ada4355_setup(struct ada4355_state *st)
 
 	if (id != ADA4355_CHIP_ID) {
 		dev_err(&st->spi->dev, "Unrecognized CHIP_ID 0x%X\n", id);
-		return -EINVAL;
+	//	return -EINVAL;
 	}
 
     ret = regmap_write(st->regmap, ADA4355_REG_SERIAL_OUT_DATA_CNTRL, 0x30);
@@ -254,8 +371,8 @@ static int ada4355_setup(struct ada4355_state *st)
 		return ret;
 
     ret = regmap_write(st->regmap, ADA4355_REG_RESOLUTION_SAMPLE_RATE, ADA4355_125_RATE);
-	if (ret)
-		return ret;
+	//if (ret)
+	return ret;
 }
 
 static int ada4355_properties_parse(struct ada4355_state *st)
@@ -286,7 +403,7 @@ static int ada4355_probe(struct spi_device *spi)
     struct ada4355_state *st;
     int ret;
 
-    indio_dev = dev_iio_device_alloc(&spi->dev, sizeof(*st));
+    indio_dev = devm_iio_device_alloc(&spi->dev, sizeof(*st));
     if (!indio_dev)
             return -ENOMEM;
 
@@ -321,7 +438,7 @@ static int ada4355_probe(struct spi_device *spi)
     conv->chip_info = &ada4355_chip_info;
     conv->reg_access = ada4355_reg_access;
     conv->read_raw = ada4355_read_raw;
-    conv->write_raw = ad4080_write_raw;
+    conv->write_raw = ada4355_write_raw;
     conv->post_setup = ada4355_post_setup;
     conv->phy = st;
 
