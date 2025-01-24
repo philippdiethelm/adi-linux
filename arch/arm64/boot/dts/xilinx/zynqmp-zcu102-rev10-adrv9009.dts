@@ -114,7 +114,8 @@
 			clocks = <&trx0_adrv9009 2>;
 			clock-names = "sampl_clk";
 			spibus-connected = <&trx0_adrv9009>;
-			//adi,axi-pl-fifo-enable;
+			adi,axi-pl-fifo-enable;
+			adi,axi-data-offload-connected = <&axi_data_offload_tx>;
 			adi,axi-interpolation-core-available;
 			interpolation-gpios = <&gpio 140 GPIO_ACTIVE_HIGH>;
 		};
@@ -175,8 +176,8 @@
 			compatible = "adi,axi-clkgen-2.00.a";
 			reg = <0x83c00000 0x10000>;
 			#clock-cells = <0>;
-			clocks = <&zynqmp_clk 71>, <&clk0_ad9528 1>;
-			clock-names = "s_axi_aclk", "clkin1";
+			clocks = <&clk0_ad9528 1>, <&zynqmp_clk 71>;
+			clock-names = "clkin1", "s_axi_aclk";
 			clock-output-names = "axi_tx_clkgen";
 		};
 
@@ -184,8 +185,8 @@
 			compatible = "adi,axi-clkgen-2.00.a";
 			reg = <0x83c10000 0x10000>;
 			#clock-cells = <0>;
-			clocks = <&zynqmp_clk 71>, <&clk0_ad9528 1>;
-			clock-names = "s_axi_aclk", "clkin1";
+			clocks = <&clk0_ad9528 1>, <&zynqmp_clk 71>;
+			clock-names = "clkin1", "s_axi_aclk";
 			clock-output-names = "axi_rx_clkgen";
 		};
 
@@ -193,8 +194,8 @@
 			compatible = "adi,axi-clkgen-2.00.a";
 			reg = <0x83c20000 0x10000>;
 			#clock-cells = <0>;
-			clocks = <&zynqmp_clk 71>, <&clk0_ad9528 1>;
-			clock-names = "s_axi_aclk", "clkin1";
+			clocks = <&clk0_ad9528 1>, <&zynqmp_clk 71>;
+			clock-names = "clkin1", "s_axi_aclk";
 			clock-output-names = "axi_rx_os_clkgen";
 		};
 
@@ -251,6 +252,11 @@
 		axi_sysid_0: axi-sysid-0@85000000 {
 			compatible = "adi,axi-sysid-1.00.a";
 			reg = <0x85000000 0x10000>;
+		};
+
+		axi_data_offload_tx: axi-data-offload-0@9c430000 {
+			compatible = "adi,axi-data-offload-1.0.a";
+			reg = <0x9c430000 0x10000>;
 		};
 	};
 };

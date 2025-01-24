@@ -450,7 +450,6 @@ static int ad_pulsar_set_samp_freq(struct ad_pulsar_adc *adc, int freq)
 
 	cnv_state = (struct pwm_state){
 		.duty_cycle = ref_clk_period_ns,
-		.phase = ref_clk_period_ns,
 		.enabled = true,
 	};
 
@@ -932,8 +931,7 @@ static int ad_pulsar_probe(struct spi_device *spi)
 	indio_dev->setup_ops = &ad_pulsar_buffer_ops;
 
 	ret = devm_iio_dmaengine_buffer_setup(indio_dev->dev.parent,
-					      indio_dev, "rx",
-					      IIO_BUFFER_DIRECTION_IN);
+					      indio_dev, "rx");
 	if (ret)
 		return ret;
 

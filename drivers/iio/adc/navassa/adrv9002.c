@@ -102,7 +102,11 @@
 #define ADRV9002_EXT_LO_FREQ_MAX	12000000000ULL
 #define ADRV9002_DEV_CLKOUT_MIN		(10 * MEGA)
 #define ADRV9002_DEV_CLKOUT_MAX		(80 * MEGA)
-
+/*
+ * The entries are reported as %freq_min,%freq_max and we have max of 7 entries. 256 bytes should
+ * be more than enough!
+ */
+#define ADRV9002_BIN_FH_ENTRIES_SZ	256
 /* Frequency hopping */
 #define ADRV9002_FH_TABLE_COL_SZ	7
 
@@ -2116,7 +2120,8 @@ static int adrv9002_phy_read_raw_no_rf_chan(const struct adrv9002_rf_phy *phy,
 	case IIO_CHAN_INFO_PROCESSED:
 		switch (chan->type) {
 		case IIO_TEMP:
-			ret = api_call(phy, adi_adrv9001_Temperature_Get, &temp);
+			ret = api_call(phy, adi_adrv9001_Temperature_Get,
+				       ADI_ADRV9001_TEMPERATURE_READ_SPI, &temp);
 			if (ret)
 				return ret;
 
@@ -3864,20 +3869,33 @@ static void adrv9002_fill_profile_read(struct adrv9002_rf_phy *phy)
  * Obviuosly, this is an awful workaround and we need to understand the root cause of
  * the issue and properly fix things. Hopefully this won't one those things where
  * "we fix it later" means never!
+ *
+ * Update: Now we do the fixup for all TX channels and for rx2tx2 mode.
  */
-int adrv9002_tx2_fixup(const struct adrv9002_rf_phy *phy)
+int adrv9002_tx_fixup(const struct adrv9002_rf_phy *phy, unsigned int chan)
 {
-	const struct adrv9002_chan *tx = &phy->tx_channels[ADRV9002_CHANN_2].channel;
+	const struct adrv9002_chan *tx = &phy->tx_channels[chan].channel;
 	struct  adi_adrv9001_TxSsiTestModeCfg ssi_cfg = {
 		.testData = ADI_ADRV9001_SSI_TESTMODE_DATA_FIXED_PATTERN,
 	};
 	struct adi_adrv9001_TxSsiTestModeStatus dummy;
 
-	if (phy->chip->n_tx < ADRV9002_CHANN_MAX || phy->rx2tx2)
-		return 0;
-
 	return api_call(phy, adi_adrv9001_Ssi_Tx_TestMode_Status_Inspect, tx->number, phy->ssi_type,
 			ADI_ADRV9001_SSI_FORMAT_16_BIT_I_Q_DATA, &ssi_cfg, &dummy);
+}
+
+int adrv9002_tx_fixup_all(const struct adrv9002_rf_phy *phy)
+{
+	int ret;
+	u32 c;
+
+	for (c = 0; c < phy->chip->n_tx; c++) {
+		ret = adrv9002_tx_fixup(phy, c);
+		if (ret)
+			return ret;
+	}
+
+	return 0;
 }
 
 int adrv9002_init(struct adrv9002_rf_phy *phy, struct adi_adrv9001_Init *profile)
@@ -3930,7 +3948,7 @@ int adrv9002_init(struct adrv9002_rf_phy *phy, struct adi_adrv9001_Init *profile
 
 	adrv9002_fill_profile_read(phy);
 
-	return adrv9002_tx2_fixup(phy);
+	return adrv9002_tx_fixup_all(phy);
 error:
 	/*
 	 * Leave the device in a reset state in case of error. There's not much we can do if
@@ -4001,12 +4019,20 @@ static ssize_t adrv9002_profile_bin_read(struct file *filp, struct kobject *kobj
 	return memory_read_from_buffer(buf, count, &pos, phy->profile_buf, phy->profile_len);
 }
 
+struct adrv9002_fh_bin_table {
+	/*
+	 * page size should be more than enough for a max of 64 entries!
+	 * +1 so we the table can be properly NULL terminated.
+	 */
+	u8 bin_table[PAGE_SIZE + 1];
+	adi_adrv9001_FhHopFrame_t hop_tbl[ADI_ADRV9001_FH_MAX_HOP_TABLE_SIZE];
+};
+
 static ssize_t adrv9002_fh_bin_table_write(struct adrv9002_rf_phy *phy, char *buf, loff_t off,
 					   size_t count, int hop, int table)
 {
-	struct adrv9002_fh_bin_table *tbl = &phy->fh_table_bin_attr;
 	char *p, *line;
-	int entry = 0, ret, max_sz = ARRAY_SIZE(tbl->hop_tbl);
+	int entry = 0, ret, max_sz;
 
 	/* force a one write() call as it simplifies things a lot */
 	if (off) {
@@ -4025,10 +4051,15 @@ static ssize_t adrv9002_fh_bin_table_write(struct adrv9002_rf_phy *phy, char *bu
 		return -ENOTSUPP;
 	}
 
+	struct adrv9002_fh_bin_table *tbl __free(kfree) = kzalloc(sizeof(*tbl), GFP_KERNEL);
+	if (!tbl)
+		return -ENOMEM;
+
 	memcpy(tbl->bin_table, buf, count);
 	/* The bellow is always safe as @bin_table is bigger (by 1 byte) than the bin attribute */
 	tbl->bin_table[count] = '\0';
 
+	max_sz = ARRAY_SIZE(tbl->hop_tbl);
 	if (phy->fh.mode == ADI_ADRV9001_FHMODE_LO_RETUNE_REALTIME_PROCESS_DUAL_HOP)
 		max_sz /= 2;
 
@@ -4080,8 +4111,6 @@ static ssize_t adrv9002_fh_bin_table_write(struct adrv9002_rf_phy *phy, char *bu
 	return ret ? ret : count;
 }
 
-static char fh_table[PAGE_SIZE + 1];
-
 static ssize_t adrv9002_dpd_tx_fh_regions_read(struct adrv9002_rf_phy *phy, char *buf,
 					       loff_t off, size_t count, int c)
 {
@@ -4103,6 +4132,10 @@ static ssize_t adrv9002_dpd_tx_fh_regions_read(struct adrv9002_rf_phy *phy, char
 	ret = adrv9002_channel_to_state(phy, &tx->channel, tx->channel.cached_state, false);
 	if (ret)
 		return ret;
+
+	char *fh_table __free(kfree) = kzalloc(ADRV9002_BIN_FH_ENTRIES_SZ, GFP_KERNEL);
+	if (!fh_table)
+		return -ENOMEM;
 
 	for (f = 0; f < ARRAY_SIZE(fh_regions); f++) {
 		/* We ask for all the possible entries and identify 0,0 as end of table */
@@ -4143,6 +4176,10 @@ static ssize_t adrv9002_dpd_tx_fh_regions_write(struct adrv9002_rf_phy *phy, cha
 		dev_err(dev, "Frequency hopping not enabled\n");
 		return -ENOTSUPP;
 	}
+
+	char *fh_table __free(kfree) = kzalloc(count + 1, GFP_KERNEL);
+	if (!fh_table)
+		return -ENOMEM;
 
 	memcpy(fh_table, buf, count);
 	/* terminate it */
@@ -4209,8 +4246,6 @@ static int adrv9002_dpd_coeficcients_get_line(const struct device *dev,
 	return ret;
 }
 
-static char coeffs[PAGE_SIZE + 1];
-
 static ssize_t adrv9002_dpd_tx_coeficcients_read(struct adrv9002_rf_phy *phy, char *buf,
 						 loff_t off, size_t count, int c, int region)
 {
@@ -4234,6 +4269,11 @@ static ssize_t adrv9002_dpd_tx_coeficcients_read(struct adrv9002_rf_phy *phy, ch
 	if (ret)
 		return ret;
 
+	/* we have 208 bytes for the coefficients. 2K should be enough to accommodate all of them */
+	char *coeffs __free(kfree) = kzalloc(2 * KILO, GFP_KERNEL);
+	if (!coeffs)
+		return -ENOMEM;
+
 	for (i = 0; i < ARRAY_SIZE(dpd_coeffs.coefficients); i++) {
 		/* 16 coefficients per line */
 		if (!((i + 1) % 16))
@@ -4245,7 +4285,7 @@ static ssize_t adrv9002_dpd_tx_coeficcients_read(struct adrv9002_rf_phy *phy, ch
 	return memory_read_from_buffer(buf, count, &off, coeffs, sz);
 }
 
-static ssize_t adrv9002_dpd_tx_coeficcients_write(struct adrv9002_rf_phy *phy, char *buf,
+static ssize_t adrv9002_dpd_tx_coefficients_write(struct adrv9002_rf_phy *phy, char *buf,
 						  loff_t off, size_t count, int c, int region)
 {
 	struct adi_adrv9001_DpdCoefficients dpd_coeffs = {0};
@@ -4281,6 +4321,10 @@ static ssize_t adrv9002_dpd_tx_coeficcients_write(struct adrv9002_rf_phy *phy, c
 		dev_err(dev, "Multiple regions not allowed...\n");
 		return -ENOTSUPP;
 	}
+
+	char *coeffs __free(kfree) = kzalloc(count + 1, GFP_KERNEL);
+	if (!coeffs)
+		return -ENOMEM;
 
 	memcpy(coeffs, buf, count);
 	/* terminate it */
@@ -4348,8 +4392,7 @@ static ssize_t adrv9002_init_cals_bin_read(struct file *filp, struct kobject *ko
 		 * That's why we are going with this trouble to allocate + free the memory every
 		 * time one wants to save the current coefficients.
 		 */
-		phy->warm_boot.cals = devm_kzalloc(&phy->spi->dev, cals.warmbootMemoryNumBytes,
-						   GFP_KERNEL);
+		phy->warm_boot.cals = kzalloc(cals.warmbootMemoryNumBytes, GFP_KERNEL);
 		if (!phy->warm_boot.cals)
 			return -ENOMEM;
 
@@ -4371,7 +4414,7 @@ static ssize_t adrv9002_init_cals_bin_read(struct file *filp, struct kobject *ko
 		 * buffer.
 		 */
 		dev_dbg(&phy->spi->dev, "Freeing memory(%u)...\n", phy->warm_boot.size);
-		devm_kfree(&phy->spi->dev, phy->warm_boot.cals);
+		kfree(phy->warm_boot.cals);
 		phy->warm_boot.cals = NULL;
 	}
 
@@ -4485,7 +4528,7 @@ static ssize_t adrv9002_dpd_tx##nr##_region##r##_write(struct file *filp, struct
 	struct iio_dev *indio_dev = dev_to_iio_dev(kobj_to_dev(kobj));				\
 	struct adrv9002_rf_phy *phy = iio_priv(indio_dev);					\
 												\
-	return adrv9002_dpd_tx_coeficcients_write(phy, buf, off, count, nr, r);			\
+	return adrv9002_dpd_tx_coefficients_write(phy, buf, off, count, nr, r);			\
 }												\
 												\
 static ssize_t adrv9002_dpd_tx##nr##_region##r##_read(struct file *filp, struct kobject *kobj,	\
@@ -4551,6 +4594,13 @@ static int adrv9002_iio_channels_get(struct adrv9002_rf_phy *phy)
 	}
 
 	return 0;
+}
+
+static void adrv9002_free_coeffs(void *dev)
+{
+	struct adrv9002_rf_phy *phy = dev;
+
+	kfree(phy->warm_boot.cals);
 }
 
 static const char * const clk_names[NUM_ADRV9002_CLKS] = {
@@ -4698,6 +4748,14 @@ int adrv9002_post_init(struct adrv9002_rf_phy *phy)
 		if (ret)
 			return ret;
 	}
+
+	/*
+	 * Add an action for freeing warmboot coeffs. Reading them might span multiple read(2) calls
+	 * which means we could leak some memory if we unbing the device concurrently with reading.
+	 */
+	ret = devm_add_action(&spi->dev, adrv9002_free_coeffs, phy);
+	if (ret)
+		return ret;
 
 	ret = devm_iio_device_register(&spi->dev, indio_dev);
 	if (ret < 0)

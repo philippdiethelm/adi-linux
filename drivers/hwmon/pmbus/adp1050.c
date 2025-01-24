@@ -48,9 +48,7 @@ static struct pmbus_driver_info adp1055_info = {
 		   | PMBUS_HAVE_STATUS_TEMP,
 };
 
-/* 6.1 probe() function still uses the second struct i2c_device_id argument */
-static int adp1050_probe(struct i2c_client *client,
-			 const struct i2c_device_id *id)
+static int adp1050_probe(struct i2c_client *client)
 {
 	struct pmbus_driver_info *info;
 
