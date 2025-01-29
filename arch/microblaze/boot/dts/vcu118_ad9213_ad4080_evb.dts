@@ -128,6 +128,12 @@
 		};
 	};
 
+	axi_data_offload_rx: axi-data-offload-1@7c450000 {
+		compatible = "adi,axi-data-offload-1.0.a";
+		reg = <0x7c450000 0x10000>;
+		adi,oneshot;
+	};
+
 	ad4080: ad4080@44A00000 {
 		compatible = "adi,axi-adc-10.0.a";
 		reg = <0x44A00000 0x10000>;
@@ -180,5 +186,6 @@
 		dma-names = "ad-mc-adc-dma";
 	};
 };
+
 
 #include "adi-ad9213-ad4080-evb.dtsi"
