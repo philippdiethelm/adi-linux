@@ -79,7 +79,7 @@
 #define AD7768_PWR_PWRMODE(x)		FIELD_PREP(AD7768_PWR_PWRMODE_MSK, x)
 
 /* AD7768_REG_DIGITAL_FILTER */
-#define AD7768_DIG_FIL_FIL_MSK		GENMASK(6, 4)
+#define AD7768_DIG_FIL_FIL_MSK		GENMASK(7, 4)
 #define AD7768_DIG_FIL_FIL(x)		FIELD_PREP(AD7768_DIG_FIL_FIL_MSK, x)
 #define AD7768_DIG_FIL_DEC_MSK		GENMASK(2, 0)
 #define AD7768_DIG_FIL_DEC_RATE(x)	FIELD_PREP(AD7768_DIG_FIL_DEC_MSK, x)
@@ -151,14 +151,6 @@ enum ad7768_mclk_div {
 	AD7768_MCLK_DIV_8,
 	AD7768_MCLK_DIV_4,
 	AD7768_MCLK_DIV_2
-};
-
-enum ad7768_flt_mode {
-	SINC5,
-	SINC5_DEC_X8,
-	SINC5_DEC_X16,
-	SINC3,
-	WIDEBAND
 };
 
 enum ad7768_dec_rate {
@@ -250,10 +242,43 @@ static const  int sinc3_dec_rate_max_values[4] = {
 	20480, 40960, 81920, 163840,
 };
 
+enum ad7768_filter_type {
+	AD7768_FILTER_SINC5,
+	AD7768_FILTER_SINC3,
+	AD7768_FILTER_WIDEBAND,
+	AD7768_FILTER_SINC3_REJ60,
+};
+
+enum ad7768_filter_regval {
+	AD7768_FILTER_REGVAL_SINC5 = 0,
+	AD7768_FILTER_REGVAL_SINC5_X8 = 1,
+	AD7768_FILTER_REGVAL_SINC5_X16 = 2,
+	AD7768_FILTER_REGVAL_SINC3 = 3,
+	AD7768_FILTER_REGVAL_WIDEBAND = 4,
+	AD7768_FILTER_REGVAL_SINC3_REJ60 = 11,
+};
+
+/*
+ * The AD7768-1 supports three primary filter types:
+ * Sinc5, Sinc3, and Wideband.
+ * However, the filter register values can also encode additional parameters
+ * such as decimation rates and 60Hz rejection. This utility function separates
+ * the filter type from these parameters.
+ */
+ static const int ad7768_filter_regval_to_type[] = {
+	[AD7768_FILTER_REGVAL_SINC5] = AD7768_FILTER_SINC5,
+	[AD7768_FILTER_REGVAL_SINC5_X8] = AD7768_FILTER_SINC5,
+	[AD7768_FILTER_REGVAL_SINC5_X16] = AD7768_FILTER_SINC5,
+	[AD7768_FILTER_REGVAL_SINC3] = AD7768_FILTER_SINC3,
+	[AD7768_FILTER_REGVAL_WIDEBAND] = AD7768_FILTER_WIDEBAND,
+	[AD7768_FILTER_REGVAL_SINC3_REJ60] = AD7768_FILTER_SINC3_REJ60,
+};
+
 static const char * const ad7768_filter_enum[] = {
-	[SINC5] = "sinc5",
-	[SINC3] = "sinc3",
-	[WIDEBAND] = "wideband",
+	[AD7768_FILTER_SINC5] = "sinc5",
+	[AD7768_FILTER_SINC3] = "sinc3",
+	[AD7768_FILTER_WIDEBAND] = "wideband",
+	[AD7768_FILTER_SINC3_REJ60] = "sinc3+rej60"
 };
 
 static const struct iio_scan_type ad7768_scan_type[] = {
@@ -387,7 +412,7 @@ struct ad7768_state {
 	unsigned int mclk_freq;
 	unsigned int mclk_div;
 	unsigned int dec_rate;
-	enum ad7768_flt_mode filter_mode;
+	enum ad7768_filter_type filter_mode;
 	unsigned int samp_freq;
 	unsigned int common_mode_voltage;
 	struct completion completion;
@@ -677,7 +702,7 @@ static void ad7768_fill_scale_tbl(struct iio_dev *dev)
 }
 
 static int ad7768_set_dig_fil(struct iio_dev *dev,
-			      enum ad7768_flt_mode filter_mode)
+			      unsigned int filter_mode)
 {
 	struct ad7768_state *st = iio_priv(dev);
 	unsigned int mode;
@@ -691,56 +716,58 @@ static int ad7768_set_dig_fil(struct iio_dev *dev,
 	mode &= ~AD7768_DIG_FIL_FIL_MSK;
 	mode |= AD7768_DIG_FIL_FIL(filter_mode);
 
-	ret = ad7768_spi_reg_write(st, AD7768_REG_DIGITAL_FILTER, mode);
-	if (ret < 0)
-		return ret;
-
-	st->filter_mode = filter_mode;
-
-	/* Update scale table: scale values vary according to the precision */
-	ad7768_fill_scale_tbl(dev);
-
-	return 0;
+	return  ad7768_spi_reg_write(st, AD7768_REG_DIGITAL_FILTER, mode);
 }
 
 static int ad7768_configure_fil_dec(struct iio_dev *dev,
-			      enum ad7768_flt_mode filter_mode,
+			      enum ad7768_filter_type filter_mode,
 			      unsigned int dec_rate)
 {
 	struct ad7768_state *st = iio_priv(dev);
 	int ret;
 
-	if (filter_mode == SINC3) {
-		ret = ad7768_set_dig_fil(dev, SINC3);
+	switch (filter_mode) {
+	case AD7768_FILTER_SINC3:
+		ret = ad7768_set_dig_fil(dev, AD7768_FILTER_REGVAL_SINC3);
 		if (ret)
 			return ret;
 
 		/* recalculate the decimation for this filter mode */
 		ret = ad7768_set_sinc3_dec_rate(st, dec_rate);
-	} else if (filter_mode == WIDEBAND) {
-		ret = ad7768_set_dig_fil(dev, filter_mode);
+		break;
+	case AD7768_FILTER_SINC3_REJ60:
+		ret = ad7768_set_dig_fil(dev, AD7768_FILTER_REGVAL_SINC3_REJ60);
+		if (ret)
+			return ret;
+
+		/* recalculate the decimation for this filter mode */
+		ret = ad7768_set_sinc3_dec_rate(st, dec_rate);
+		break;
+	case AD7768_FILTER_WIDEBAND:
+		ret = ad7768_set_dig_fil(dev, AD7768_FILTER_REGVAL_WIDEBAND);
 		if (ret)
 			return ret;
 
 		/* recalculate the decimation rate */
 		ret = ad7768_set_dec_rate(st, dec_rate);
-	} else {
-		/* For SINC5 filter */
+		break;
+	case AD7768_FILTER_SINC5:
+	/* For SINC5 filter */
 		/* Decimation 8 and 16 are set in the digital filter field */
 		if (dec_rate <= 8) {
-			ret = ad7768_set_dig_fil(dev, SINC5_DEC_X8);
+			ret = ad7768_set_dig_fil(dev, AD7768_FILTER_REGVAL_SINC5_X8);
 			if (ret)
 				return ret;
 
 			st->dec_rate = 8;
 		} else if (dec_rate <= 16) {
-			ret = ad7768_set_dig_fil(dev, SINC5_DEC_X16);
+			ret = ad7768_set_dig_fil(dev, AD7768_FILTER_REGVAL_SINC5_X16);
 			if (ret)
 				return ret;
 
 			st->dec_rate = 16;
 		} else {
-			ret = ad7768_set_dig_fil(dev, SINC5);
+			ret = ad7768_set_dig_fil(dev, AD7768_FILTER_REGVAL_SINC5);
 			if (ret)
 				return ret;
 
@@ -749,6 +776,10 @@ static int ad7768_configure_fil_dec(struct iio_dev *dev,
 	}
 	if (ret)
 		return ret;
+
+	st->filter_mode = filter_mode;
+	/* Update scale table: scale values vary according to the precision */
+	ad7768_fill_scale_tbl(dev);
 
 	/* Update sampling frequency */
 	return ad7768_set_freq(st, st->samp_freq);
@@ -775,11 +806,9 @@ static int ad7768_get_dig_fil_attr(struct iio_dev *dev,
 		return ret;
 
 	mode = FIELD_GET(AD7768_DIG_FIL_FIL_MSK, mode);
-	/* Filter modes from 0 to 2 are represented as SINC5 */
-	if (mode < SINC3)
-		return SINC5;
 
-	return mode;
+	/* From the register value, get the corresponding filter type */
+	return ad7768_filter_regval_to_type[mode];
 }
 
 static int ad7768_calc_pga_gain(struct ad7768_state *st, int gain_int,
@@ -1069,11 +1098,11 @@ static ssize_t decimation_rate_available_show(struct device *dev,
 
 	/* Return decimation rate available in range format */
 	buf[len++] = '[';
-	if (st->filter_mode == SINC3) {
+	if (st->filter_mode == AD7768_FILTER_SINC3 || st->filter_mode == AD7768_FILTER_SINC3_REJ60) {
 		len += sysfs_emit_at(buf, len, "%d ", SINC3_DEC_RATE_MIN);
 		len += sysfs_emit_at(buf, len, "%d ", SINC3_DEC_RATE_MIN);
 		len += sysfs_emit_at(buf, len, "%d ", SINC3_DEC_RATE_MAX);
-	} else if (st->filter_mode == WIDEBAND) {
+	} else if (st->filter_mode == AD7768_FILTER_WIDEBAND) {
 		len += sysfs_emit_at(buf, len, "%d ", WIDEBAND_DEC_RATE_MIN);
 		len += sysfs_emit_at(buf, len, "%d ", WIDEBAND_DEC_RATE_MIN);
 		len += sysfs_emit_at(buf, len, "%d ", WIDEBAND_DEC_RATE_MAX);
@@ -1294,15 +1323,8 @@ static int ad7768_setup(struct ad7768_state *st, struct iio_dev *indio_dev)
 	if (ret < 0)
 		return ret;
 
-	/* Set Default Filter mode */
-	ret = ad7768_set_dig_fil(indio_dev, SINC5);
-	if (ret < 0)
-		return ret;
-
-	/* Set Default Decimation rate */
-	ret = ad7768_set_dec_rate(st, 32);
-	if (ret < 0)
-		return ret;
+	/* Set Default Filter mode and decimation filter */
+	ret = ad7768_configure_fil_dec(indio_dev, AD7768_FILTER_SINC5, 32);
 
 	/**
 	 * Set the default sampling frequency to 256 kSPS for hardware buffer,
