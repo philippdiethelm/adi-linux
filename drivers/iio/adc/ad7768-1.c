@@ -844,15 +844,6 @@ static int ad7768_triggered_buffer_alloc(struct iio_dev *indio_dev)
 
 	indio_dev->trig = iio_trigger_get(st->trig);
 
-	init_completion(&st->completion);
-
-	ret = devm_request_irq(indio_dev->dev.parent, st->irq,
-			       &ad7768_interrupt,
-			       IRQF_TRIGGER_RISING | IRQF_ONESHOT,
-			       indio_dev->name, indio_dev);
-	if (ret)
-		return ret;
-
 	return devm_iio_triggered_buffer_setup(indio_dev->dev.parent, indio_dev,
 					       &iio_pollfunc_store_time,
 					       &ad7768_trigger_handler,
@@ -965,7 +956,16 @@ static int ad7768_probe(struct spi_device *spi)
 		return ret;
 	}
 
+	init_completion(&st->completion);
+
 	ret = ad7768_set_channel_label(indio_dev, ARRAY_SIZE(ad7768_channels));
+	if (ret)
+		return ret;
+
+	ret = devm_request_irq(&spi->dev, spi->irq,
+			&ad7768_interrupt,
+			IRQF_TRIGGER_RISING | IRQF_ONESHOT,
+			indio_dev->name, indio_dev);
 	if (ret)
 		return ret;
 
