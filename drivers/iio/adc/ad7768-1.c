@@ -210,7 +210,6 @@ struct ad7768_state {
 	struct regulator *vref;
 	struct clk *mclk;
 	struct gpio_chip gpiochip;
-	unsigned int gpio_avail_map;
 	unsigned int mclk_freq;
 	unsigned int samp_freq;
 	unsigned int common_mode_voltage;
@@ -484,19 +483,6 @@ err_release:
 	iio_device_release_direct_mode(indio_dev);
 }
 
-int ad7768_gpio_request(struct gpio_chip *chip, unsigned int offset)
-{
-	struct iio_dev *indio_dev = gpiochip_get_data(chip);
-	struct ad7768_state *st = iio_priv(indio_dev);
-
-	if (!(st->gpio_avail_map & BIT(offset)))
-		return -ENODEV;
-
-	st->gpio_avail_map &= ~BIT(offset);
-
-	return 0;
-}
-
 int ad7768_gpio_init(struct ad7768_state *st, struct iio_dev *indio_dev)
 {
 	int ret;
@@ -507,18 +493,18 @@ int ad7768_gpio_init(struct ad7768_state *st, struct iio_dev *indio_dev)
 	if (ret < 0)
 		return ret;
 
-	st->gpio_avail_map = AD7768_GPIO_CONTROL_MSK;
-	st->gpiochip.label = "ad7768_1_gpios";
-	st->gpiochip.base = -1;
-	st->gpiochip.ngpio = 4;
-	st->gpiochip.parent = &st->spi->dev;
-	st->gpiochip.can_sleep = true;
-	st->gpiochip.direction_input = ad7768_gpio_direction_input;
-	st->gpiochip.direction_output = ad7768_gpio_direction_output;
-	st->gpiochip.get = ad7768_gpio_get;
-	st->gpiochip.set = ad7768_gpio_set;
-	st->gpiochip.request = ad7768_gpio_request;
-	st->gpiochip.owner = THIS_MODULE;
+	st->gpiochip = (struct gpio_chip) {
+		.label = "ad7768_1_gpios",
+		.base = -1,
+		.ngpio = 4,
+		.parent = &st->spi->dev,
+		.can_sleep = true,
+		.direction_input = ad7768_gpio_direction_input,
+		.direction_output = ad7768_gpio_direction_output,
+		.get = ad7768_gpio_get,
+		.set = ad7768_gpio_set,
+		.owner = THIS_MODULE,
+	};
 
 	return gpiochip_add_data(&st->gpiochip, indio_dev);
 }
