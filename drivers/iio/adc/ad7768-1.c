@@ -710,9 +710,12 @@ static int ad7768_setup(struct iio_dev *indio_dev)
 	if (IS_ERR(st->gpio_sync_in))
 		return PTR_ERR(st->gpio_sync_in);
 
-	ret = ad7768_gpio_init(st, indio_dev);
-	if (ret < 0)
-		return ret;
+	/* Only create a Chip GPIO if flagged for it */
+	if (device_property_read_bool(&st->spi->dev, "gpio-controller")) {
+		ret = ad7768_gpio_init(st, indio_dev);
+		if (ret < 0)
+			return ret;
+	}
 
 	/**
 	 * Set the default sampling frequency to 256 kSPS for hardware buffer,
