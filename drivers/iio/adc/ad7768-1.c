@@ -24,7 +24,7 @@
 #include <linux/regulator/driver.h>
 #include <linux/sysfs.h>
 #include <linux/spi/spi.h>
-#include <linux/spi/legacy-spi-engine.h>
+#include <linux/spi/spi-engine-ex.h>
 #include <linux/units.h>
 #include <linux/util_macros.h>
 
@@ -344,6 +344,8 @@ struct ad7768_chip_info {
 struct ad7768_state {
 	const struct ad7768_chip_info *chip;
 	struct spi_device *spi;
+	struct spi_transfer offload_xfer;
+	struct spi_message offload_msg;
 	struct regmap *regmap;
 	struct regmap *regmap24;
 	int vref_uv;
@@ -1290,18 +1292,14 @@ static int ad7768_buffer_postenable(struct iio_dev *indio_dev)
 {
 	struct ad7768_state *st = iio_priv(indio_dev);
 	const struct iio_scan_type *scan_type;
-	struct spi_transfer xfer = {
-		.len = 1,
-	};
-	unsigned int rx_data[2];
-	struct spi_message msg;
 	int ret;
 
 	scan_type = iio_get_current_scan_type(indio_dev, &indio_dev->channels[0]);
 	if (IS_ERR(scan_type))
 		return PTR_ERR(scan_type);
 
-	xfer.bits_per_word = scan_type->realbits;
+	st->offload_xfer.len = roundup_pow_of_two(BITS_TO_BYTES(scan_type->realbits));
+	st->offload_xfer.bits_per_word = scan_type->realbits;
 	/*
 	* Write a 1 to the LSB of the INTERFACE_FORMAT register to enter
 	* continuous read mode. Subsequent data reads do not require an
@@ -1312,14 +1310,20 @@ static int ad7768_buffer_postenable(struct iio_dev *indio_dev)
 		return ret;
 
 	if (st->spi_is_dma_mapped) {
-		spi_bus_lock(st->spi->master);
+		/* HACK: invalid pointer indicates read data from SPI offload DMA */
+		st->offload_xfer.rx_buf = (void *)(-1);
+		spi_message_init_with_transfers(&st->offload_msg, &st->offload_xfer, 1);
 
-		xfer.rx_buf = rx_data;
-		spi_message_init_with_transfers(&msg, &xfer, 1);
-		ret = legacy_spi_engine_offload_load_msg(st->spi, &msg);
+		ret = spi_optimize_message(st->spi, &st->offload_msg);
 		if (ret < 0)
 			return ret;
-		legacy_spi_engine_offload_enable(st->spi, true);
+
+		spi_bus_lock(st->spi->master);
+
+		ret = spi_engine_ex_offload_load_msg(st->spi, &st->offload_msg);
+		if (ret < 0)
+			return ret;
+		spi_engine_ex_offload_enable(st->spi, true);
 	}
 
 	return ret;
@@ -1331,10 +1335,11 @@ static int ad7768_buffer_predisable(struct iio_dev *indio_dev)
 	unsigned int unused;
 
 	if (st->spi_is_dma_mapped) {
-		legacy_spi_engine_offload_enable(st->spi, false);
+		spi_engine_ex_offload_enable(st->spi, false);
 		spi_bus_unlock(st->spi->master);
 	}
 
+	spi_unoptimize_message(&st->offload_msg);
 	/*
 	 * To exit continuous read mode, perform a single read of the ADC_DATA
 	 * reg (0x2C), which allows further configuration of the device.
@@ -1672,7 +1677,7 @@ static int ad7768_probe(struct spi_device *spi)
 		return PTR_ERR(st->mclk);
 
 	st->mclk_freq = clk_get_rate(st->mclk);
-	st->spi_is_dma_mapped = legacy_spi_engine_offload_supported(spi);
+	st->spi_is_dma_mapped = spi_engine_ex_offload_supported(spi);
 	st->irq = spi->irq;
 
 	st->chip = spi_get_device_match_data(spi);
