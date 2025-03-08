@@ -1741,17 +1741,17 @@ static int ad7768_probe(struct spi_device *spi)
 	if (ret)
 		return ret;
 
-	ret = devm_request_irq(&spi->dev, spi->irq,
+	if (st->spi_is_dma_mapped) {
+		ret = ad7768_hardware_buffer_alloc(indio_dev);
+	} else {
+		ret = ad7768_triggered_buffer_alloc(indio_dev);
+		ret = devm_request_irq(&spi->dev, spi->irq,
 			&ad7768_interrupt,
 			IRQF_TRIGGER_RISING | IRQF_ONESHOT,
 			indio_dev->name, indio_dev);
-	if (ret)
-		return ret;
-
-	if (st->spi_is_dma_mapped)
-		ret = ad7768_hardware_buffer_alloc(indio_dev);
-	else
-		ret = ad7768_triggered_buffer_alloc(indio_dev);
+		if (ret)
+			return ret;
+	}
 	if (ret)
 		return ret;
 
