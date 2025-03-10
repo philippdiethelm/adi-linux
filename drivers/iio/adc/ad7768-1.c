@@ -165,6 +165,8 @@ enum ad7768_filter_regval {
 };
 
 enum ad7768_scan_type {
+	AD7768_SCAN_TYPE_DMA_NORMAL,
+	AD7768_SCAN_TYPE_DMA_HIGH_SPEED,
 	AD7768_SCAN_TYPE_NORMAL,
 	AD7768_SCAN_TYPE_HIGH_SPEED,
 };
@@ -280,6 +282,18 @@ static const struct iio_scan_type ad7768_scan_type[] = {
 		.realbits = 16,
 		.storagebits = 16,
 		.endianness = IIO_BE,
+	},
+	[AD7768_SCAN_TYPE_DMA_NORMAL] = {
+		.sign = 's',
+		.realbits = 24,
+		.storagebits = 32,
+		.endianness = IIO_CPU,
+	},
+	[AD7768_SCAN_TYPE_DMA_HIGH_SPEED] = {
+		.sign = 's',
+		.realbits = 16,
+		.storagebits = 32,
+		.endianness = IIO_CPU,
 	},
 };
 
@@ -1124,6 +1138,10 @@ static int ad7768_get_current_scan_type(const struct iio_dev *indio_dev,
 					const struct iio_chan_spec *chan)
 {
 	struct ad7768_state *st = iio_priv(indio_dev);
+
+	if (st->spi_is_dma_mapped)
+		return st->oversampling_ratio == 8 ? AD7768_SCAN_TYPE_DMA_HIGH_SPEED :
+		       AD7768_SCAN_TYPE_DMA_NORMAL;
 
 	return st->oversampling_ratio == 8 ? AD7768_SCAN_TYPE_HIGH_SPEED :
 		AD7768_SCAN_TYPE_NORMAL;
