@@ -1177,7 +1177,7 @@ void sdhci_prepare_dma(struct sdhci_host *host, struct mmc_data *data)
 			 * This only happens when someone fed
 			 * us an invalid request.
 			 */
-			WARN_ON(1);
+			//WARN_ON(1);
 			host->flags &= ~SDHCI_REQ_USE_DMA;
 		} else if (host->flags & SDHCI_USE_ADMA) {
 			sdhci_adma_table_pre(host, data, sg_cnt);

@@ -1,0 +1,111 @@
+// SPDX-License-Identifier: GPL-2.0
+/*
+ * Overlay for the Mobile I/O Expander and QWERTY Keypad Controller
+ *
+ * Copyright 2022 Analog Devices Inc.
+ */
+
+/dts-v1/;
+/plugin/;
+
+#include <dt-bindings/interrupt-controller/irq.h>
+#include <dt-bindings/input/input.h>
+#include <dt-bindings/gpio/gpio.h>
+
+/ {
+	compatible = "brcm,bcm2835", "brcm,bcm2708", "brcm,bcm2709";
+};
+
+&gpio {
+	adp5589_irq: adp5589_irq {
+		brcm,pins = <16>; // interrupt
+		brcm,function = <0>; // in
+	};
+};
+
+&i2c1 {
+	#address-cells = <1>;
+	#size-cells = <0>;
+	status = "okay";
+
+	adp5589: adp5589@34 {
+		compatible = "adi,adp5589-02";
+		reg = <0x34>;
+
+		gpio-controller;
+		#gpio-cells = <2>;
+		interrupt-controller;
+		#interrupt-cells = <2>;
+
+		/*
+		 * col0, col1, col2 and col3
+		 * row0, row1, row2 and row5
+		 */
+		adi,keypad-pins = <0 1 2 5 8 9 10 11>;
+
+		pinctrl-names = "default";
+		pinctrl-0 = <&adp5589_irq>;
+		interrupts = <16 IRQ_TYPE_EDGE_FALLING>;
+		interrupt-parent = <&gpio>;
+
+		linux,keymap = <
+			MATRIX_KEY(0x00, 0x00, KEY_1)
+			MATRIX_KEY(0x00, 0x01, KEY_2)
+			MATRIX_KEY(0x00, 0x02, KEY_3)
+			MATRIX_KEY(0x00, 0x03, KEY_4)
+
+			MATRIX_KEY(0x01, 0x00, KEY_A)
+			MATRIX_KEY(0x01, 0x01, KEY_B)
+			MATRIX_KEY(0x01, 0x02, KEY_C)
+			MATRIX_KEY(0x01, 0x03, KEY_D)
+
+			MATRIX_KEY(0x02, 0x00, BTN_1)
+			MATRIX_KEY(0x02, 0x01, BTN_2)
+			MATRIX_KEY(0x02, 0x02, BTN_3)
+			MATRIX_KEY(0x02, 0x03, BTN_4)
+
+			MATRIX_KEY(0x05, 0x00, KEY_F1)
+			MATRIX_KEY(0x05, 0x01, KEY_F2)
+			MATRIX_KEY(0x05, 0x02, KEY_F3)
+			MATRIX_KEY(0x05, 0x03, KEY_F4)
+		>;
+	};
+};
+
+
+&{/soc} {
+	adp5589_buttons {
+		compatible = "gpio-keys";
+		status = "okay";
+		interrupt-parent = <&adp5589>;
+
+		button_p: pause {
+			label = "pause";
+			linux,code = <KEY_PAUSE>;
+			gpios = <&adp5589 6 GPIO_ACTIVE_LOW>;
+			debounce-interval = <50>;
+		};
+
+		button_c: capslock {
+			label = "capslock";
+			linux,code = <KEY_CAPSLOCK>;
+			gpios = <&adp5589 7 GPIO_ACTIVE_HIGH>;
+			debounce-interval = <50>;
+		};
+
+		button_s: subtitle {
+			label = "subtitle";
+			linux,code = <KEY_SUBTITLE>;
+			gpios = <&adp5589 13 GPIO_ACTIVE_LOW>;
+			debounce-interval = <50>;
+		};
+
+		button_m: mute {
+			label = "mute";
+			linux,code = <KEY_MUTE>;
+			gpios = <&adp5589 3 GPIO_ACTIVE_LOW>;
+			debounce-interval = <50>;
+		};
+	};
+};
+
