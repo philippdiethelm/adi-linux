@@ -67,6 +67,42 @@
 /*PATTERN*/
 #define ADA4355_ALT_CHECKERBOARD_PATTERN    0x44
 
+/*USER INPUT*/
+
+#define ADA4355_USER_INPUT					0x00
+
+// Output Mode
+#define ADA4355_TWOSCOMP                    BIT(0)
+
+/*enum ada4355_output_type {
+	OFFSET_BINARY,
+	TWOS_COMPLEMENT
+};
+
+static const char * const ada4355_output_mode_enum[] = {
+	[OFFSET_BINARY] = "OFFSET_BINARY",
+	[TWOS_COMPLEMENT] = "TWOS_COMPLEMENT",
+};
+
+static int ada4355_set_output_mode(struct iio_dev *dev, const struct iio_chan_spec *chan, unsigned int output_mode);
+static int ada4355_get_output_mode(struct iio_dev *dev, const struct iio_chan_spec *chan);
+
+static const struct iio_enum ada4355_output_mode_iio_enum = {
+	.items = ada4355_output_mode_enum,
+	.num_items = ARRAY_SIZE(ada4355_output_mode_enum),
+	.set = ada4355_set_output_mode,
+	.get = ada4355_get_output_mode,
+};
+
+static struct iio_chan_spec_ext_info ada4355_ext_info[] = {
+
+	IIO_ENUM("output_mode", IIO_SHARED_BY_ALL, &ada4355_output_mode_iio_enum),
+	IIO_ENUM_AVAILABLE("output_mode", IIO_SHARED_BY_ALL, &ada4355_output_mode_iio_enum),
+
+	{ },
+};
+*/
+
 static const int ada4355_scale_table[][2] = {
 	    {6000, 0},
 };
@@ -78,6 +114,7 @@ struct ada4355_state {
         /* Protect against concurrent accesses to the device and data content */
         struct mutex	            lock;
         unsigned int	            num_lanes;
+		//unsigned int			    output_type;
 };
 
 static const struct regmap_config ada4355_regmap_config = {
@@ -93,6 +130,34 @@ static struct ada4355_state *ada4355_get_data(struct iio_dev *indio_dev)
 
          return conv->phy;
 };
+
+/*static int ada4355_set_output_mode(struct iio_dev *indio_dev, const struct iio_chan_spec *chan,
+								   unsigned int output_mode)
+{
+	struct ada4355_state *st = ada4355_get_data(indio_dev);
+	int ret;
+	printk("ada4355 output_mode = %d", output_mode);
+	st->output_type = output_mode;
+
+	ret = regmap_write(st->regmap, ADA4355_REG_OUTPUT_MODE, output_mode);
+	if (ret)
+			return ret;
+	return 0;
+}
+
+static int ada4355_get_output_mode(struct iio_dev *indio_dev, const struct iio_chan_spec *chan)
+{
+	struct ada4355_state *st = ada4355_get_data(indio_dev);
+	int ret;
+	unsigned int readval;
+
+	ret = regmap_read(st->regmap, ADA4355_REG_OUTPUT_MODE, &readval);
+	if (ret)
+		return ret;
+
+	return FIELD_GET(GENMASK(1, 0), readval);
+}
+*/
 
 static int ada4355_reg_access(struct iio_dev *indio_dev, unsigned int reg,
                               unsigned int writeval, unsigned int *readval)
@@ -155,6 +220,7 @@ static int ada4355_write_raw(struct iio_dev *indio_dev,
 
 #define ADA4355_CHAN(_chan, _si, _bits, _sign, _shift)		\
     { .type = IIO_VOLTAGE,						\
+	  /*.ext_info = ada4355_ext_info,*/        \
       .indexed = 1,							\
       .channel = _chan,						\
       .info_mask_separate = BIT(IIO_CHAN_INFO_SCALE),		\
@@ -175,8 +241,19 @@ static const struct axiadc_chip_info ada4355_chip_info = {
 	.scale_table = ada4355_scale_table, //???
 	.num_scales = ARRAY_SIZE(ada4355_scale_table),//???
 	.num_channels = 1,
-	.channel[0] = ADA4355_CHAN(0, 0, 16, 'S', 0),
+	.channel[0] = ADA4355_CHAN(0, 0, 14, 's', 2),
 };
+
+/*static const struct axiadc_chip_info ada4355_chip_info_binary = {
+	.name = "ADA4355",
+	.id = ADA4355_CHIP_ID,
+	.max_rate = 125000000UL,
+	.scale_table = ada4355_scale_table, //???
+	.num_scales = ARRAY_SIZE(ada4355_scale_table),//???
+	.num_channels = 1,
+	.channel[0] = ADA4355_CHAN(0, 0, 14, 'u', 2),
+};
+*/
 
 static void ada4355_clk_disable(void *data)
 {
@@ -185,7 +262,7 @@ static void ada4355_clk_disable(void *data)
 	clk_disable_unprepare(st->clk);
 }
 
-int find_opt(u8 *field, u32 size, u32 *ret_start)
+/*int find_opt(u8 *field, u32 size, u32 *ret_start)
 {
        int i, cnt = 0, max_cnt = 0, start, max_start = 0;
 
@@ -213,15 +290,15 @@ int find_opt(u8 *field, u32 size, u32 *ret_start)
 
        return max_cnt;
 }
-
+*/
 static int ada4355_post_setup(struct iio_dev *indio_dev)
 {
 	struct axiadc_state *axi_adc_st = iio_priv(indio_dev);
 	struct ada4355_state *st = ada4355_get_data(indio_dev);
 	struct axiadc_converter *conv = iio_device_get_drvdata(indio_dev);;
 	//struct ada4355_dev *adc = conv->phy;
-	u8 pn_status[2][32];
-	int opt_delay, c, s;
+	//u8 pn_status[2][32];
+	//int opt_delay, c, s;
 	unsigned int reg_cntrl;
 	unsigned int lane_num = 2;
 	unsigned int i;
@@ -240,9 +317,8 @@ static int ada4355_post_setup(struct iio_dev *indio_dev)
 	reg_cntrl |= ADI_SYNC;
 	axiadc_write(axi_adc_st, ADI_REG_CNTRL, reg_cntrl);
 	reg_cntrl = axiadc_read(axi_adc_st, ADI_REG_CNTRL);
-	printk("ada4355_enable_sync: %x", reg_cntrl);
 
-	for (i = 0; i < lane_num; i++) {
+	/*for (i = 0; i < lane_num; i++) {
 		for (delay = 0; delay < 32; delay++) {
 			val = axiadc_read(axi_adc_st, ADI_REG_CHAN_STATUS(i));
 			axiadc_write(axi_adc_st, ADI_REG_CHAN_STATUS(i), val);
@@ -254,8 +330,8 @@ static int ada4355_post_setup(struct iio_dev *indio_dev)
 				pn_status[i][delay] = 0;
 		}
 	}
-
-	dev_info(&conv->spi->dev, "digital interface tuning:\n");
+*/
+	/*dev_info(&conv->spi->dev, "digital interface tuning:\n");
 
 	pr_cont("  ");
 	for (i = 0; i < 31; i++)
@@ -280,6 +356,7 @@ static int ada4355_post_setup(struct iio_dev *indio_dev)
 		dev_info(&conv->spi->dev, "lane %d: selected delay: %d\n",
 			i, opt_delay);
 	}
+	*/
 
 	return 0;
 }
@@ -344,7 +421,18 @@ static int ada4355_setup(struct ada4355_state *st)
 	if (ret)
 		return ret;
 
-	ret = regmap_write(st->regmap, ADA4355_REG_TEST_MODE, ADA4355_ALT_CHECKERBOARD_PATTERN); //pattern
+	//ret = regmap_write(st->regmap, ADA4355_REG_TEST_MODE, ADA4355_ALT_CHECKERBOARD_PATTERN); //pattern
+
+	ret = regmap_write(st->regmap, ADA4355_REG_TEST_MODE, ADA4355_USER_INPUT);
+	if (ret)
+		return ret;
+
+	ret = regmap_write(st->regmap, ADA4355_REG_OUTPUT_MODE, ADA4355_TWOSCOMP);
+	//ret = regmap_write(st->regmap, ADA4355_REG_OUTPUT_MODE, 0x00);
+
+	ret = regmap_read(st->regmap, ADA4355_REG_OUTPUT_MODE, &reg);
+	if (ret)
+			return ret;
 
     ret = regmap_write(st->regmap, ADA4355_REG_RESOLUTION_SAMPLE_RATE, ADA4355_125_RATE);
 	return ret;
@@ -387,6 +475,7 @@ static int ada4355_probe(struct spi_device *spi)
     struct axiadc_converter *conv;
     struct ada4355_state *st;
     int ret;
+	int reg;
 
     indio_dev = devm_iio_device_alloc(&spi->dev, sizeof(*st));
     if (!indio_dev)
@@ -420,7 +509,23 @@ static int ada4355_probe(struct spi_device *spi)
 
     conv->spi = st->spi;
     conv->clk = st->clk;
-    conv->chip_info = &ada4355_chip_info;
+
+	/*ret = regmap_read(st->regmap, ADA4355_REG_OUTPUT_MODE, &reg);
+	if (ret)
+		return ret;
+
+	reg = reg & 0x01;
+    printk("ada4355 probe reg_value %x", reg);
+	if (reg == 0x01){
+	conv->chip_info = &ada4355_chip_info;
+		printk("ada4355 probe twos complement");
+	}
+	else{
+		conv->chip_info = &ada4355_chip_info_binary;
+		printk("ada4355 probe offset binary");
+	}
+	*/
+	conv->chip_info = &ada4355_chip_info;
     conv->reg_access = ada4355_reg_access;
     conv->read_raw = ada4355_read_raw;
     conv->write_raw = ada4355_write_raw;
