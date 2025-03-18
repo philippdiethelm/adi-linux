@@ -1355,7 +1355,7 @@ static const struct iio_chan_spec_ext_info lmx2582_ext_info[] = {
 	_LMX2582_EXT_INFO("powerdown", LMX2582_CH_ATTR_PWRDOWN, IIO_SEPARATE),
 	_LMX2582_EXT_INFO("name", LMX2582_CH_ATTR_CHANNEL_NAME, IIO_SEPARATE),
 	IIO_ENUM("out_mux", IIO_SEPARATE, &lmx2582_out_mux_available),
-	IIO_ENUM_AVAILABLE("out_mux", &lmx2582_out_mux_available),
+	IIO_ENUM_AVAILABLE("out_mux", IIO_SHARED_BY_TYPE, &lmx2582_out_mux_available),
 	{ },
 };
 
@@ -1420,9 +1420,9 @@ static int lmx2582_write_raw(struct iio_dev *indio_dev,
 	}
 
 	if (ret == 0) {
-		mutex_lock(&indio_dev->mlock);
+		mutex_lock(&st->lock);
 		ret = lmx2582_setup(st, 0);
-		mutex_unlock(&indio_dev->mlock);
+		mutex_unlock(&st->lock);
 	}
 	
 	return ret;
@@ -1695,9 +1695,9 @@ static ssize_t lmx2582_store(struct device *dev,
 	}
 
 	if (ret == 0) {
-		mutex_lock(&indio_dev->mlock);
+		mutex_lock(&st->lock);
 		ret = lmx2582_setup(st, 0);
-		mutex_unlock(&indio_dev->mlock);
+		mutex_unlock(&st->lock);
 		lmx2582_force_recalc_rate(st);
 	}
 
@@ -2117,7 +2117,7 @@ static unsigned long lmx2582_clk_recalc_rate(struct clk_hw *hw,
 
 	rate = to_clk_priv(hw)->frequency;
 
-	dev_dbg(&st->spi->dev,
+	dev_info(&st->spi->dev,
 		"lmx2582_clk_recalc_rate rate=%llu, parent_rate=%lu\n",
 		rate, parent_rate);
 
@@ -2136,7 +2136,7 @@ static long lmx2582_clk_round_rate(struct clk_hw *hw,
 
 	scaled_rate = from_ccf_scaled(rate, &st->scale);
 
-	dev_dbg(&st->spi->dev,
+	dev_info(&st->spi->dev,
 		"lmx2582_clk_round_rate scaled_rate=%llu, parent_rate=%lu\n",
 		scaled_rate, parent_rate ? *parent_rate : 0);
 
@@ -2165,7 +2165,7 @@ static long lmx2582_clk_round_rate(struct clk_hw *hw,
 		dev_info(&st->spi->dev, "found fractional-N configuration\n");
 	}
 
-	dev_dbg(&st->spi->dev, "lmx2582_clk_round_rate: "
+	dev_info(&st->spi->dev, "lmx2582_clk_round_rate: "
 		"pll_n=%u, pll_num=%u, pll_den=%u, fout=%llu\n",
 		pll_n, pll_num, pll_den, fout);
 
@@ -2184,7 +2184,7 @@ static int lmx2582_clk_set_rate(struct clk_hw *hw,
 
 	scaled_rate = from_ccf_scaled(rate, &st->scale);
 
-	dev_dbg(&st->spi->dev,
+	dev_info(&st->spi->dev,
 		"lmx2582_clk_set_rate for rate=%lu and parent_rate=%lu\n",
 		rate, parent_rate);
 
